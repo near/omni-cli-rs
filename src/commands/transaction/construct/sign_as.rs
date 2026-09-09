@@ -18,10 +18,23 @@ use crate::config::ResolvedChain;
 #[interactive_clap(input_context = SpecContext)]
 #[interactive_clap(output_context = DerivationPathContext)]
 pub struct DerivationPath {
+    #[interactive_clap(skip_default_input_arg)]
     /// Derivation path (determines the acting foreign account, e.g. base-locker-admin):
     path: String,
     #[interactive_clap(subcommand)]
     sign_as: SignAs,
+}
+
+/// The pre-filled derivation path offered in interactive mode.
+pub const DEFAULT_DERIVATION_PATH: &str = "omni-1";
+
+impl DerivationPath {
+    fn input_path(_context: &SpecContext) -> color_eyre::eyre::Result<Option<String>> {
+        let path = inquire::Text::new("Derivation path (determines the acting foreign account):")
+            .with_initial_value(DEFAULT_DERIVATION_PATH)
+            .prompt()?;
+        Ok(Some(path))
+    }
 }
 
 #[derive(Clone)]
