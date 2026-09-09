@@ -1,0 +1,360 @@
+//! `omni construct evm <chain> <action> ... derivation-path <path> sign-as-...`
+
+use std::sync::Arc;
+
+use inquire::CustomType;
+use strum::{EnumDiscriminants, EnumIter, EnumMessage};
+
+use crate::chains::evm::{EvmActionSpec, EvmAdapter};
+use crate::commands::construct::{SelectedChain, SpecContext};
+use crate::types::eth_address::EthAddress;
+use crate::types::eth_amount::EthAmount;
+use crate::types::hex_bytes::HexBytes;
+
+#[derive(Debug, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(input_context = near_cli_rs::GlobalContext)]
+#[interactive_clap(output_context = EvmChainContext)]
+pub struct EvmChain {
+    #[interactive_clap(skip_default_input_arg)]
+    /// Which EVM chain? (from the omni chain registry)
+    chain: String,
+    #[interactive_clap(subcommand)]
+    action: EvmAction,
+}
+
+#[derive(Clone)]
+pub struct EvmChainContext {
+    pub global_context: near_cli_rs::GlobalContext,
+    pub selected: Arc<SelectedChain>,
+}
+
+impl EvmChainContext {
+    pub fn from_previous_context(
+        previous_context: near_cli_rs::GlobalContext,
+        scope: &<EvmChain as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
+    ) -> color_eyre::eyre::Result<Self> {
+        Ok(Self {
+            global_context: previous_context,
+            selected: Arc::new(crate::commands::construct::load_chain(
+                crate::chains::evm::FAMILY,
+                &scope.chain,
+            )?),
+        })
+    }
+}
+
+impl EvmChain {
+    fn input_chain(
+        _context: &near_cli_rs::GlobalContext,
+    ) -> color_eyre::eyre::Result<Option<String>> {
+        crate::commands::construct::input_chain(crate::chains::evm::FAMILY)
+    }
+}
+
+impl EvmChainContext {
+    fn into_spec_context(self, spec: EvmActionSpec) -> SpecContext {
+        SpecContext {
+            global_context: self.global_context,
+            chain_key: self.selected.chain_key.clone(),
+            chain_def: self.selected.chain_def.clone(),
+            mpc_config: self.selected.mpc_config.clone(),
+            adapter: Arc::new(EvmAdapter { spec }),
+        }
+    }
+}
+
+#[derive(Debug, EnumDiscriminants, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(context = EvmChainContext)]
+#[strum_discriminants(derive(EnumMessage, EnumIter))]
+/// Select the action:
+pub enum EvmAction {
+    #[strum_discriminants(strum(
+        message = "transfer       -   Transfer the native token (ETH, ...)"
+    ))]
+    /// Transfer the native token (ETH, ...)
+    Transfer(Transfer),
+    #[strum_discriminants(strum(
+        message = "contract-call  -   Call a contract function (typed signature or raw calldata)"
+    ))]
+    /// Call a contract function (typed signature or raw calldata)
+    ContractCall(ContractCall),
+    #[strum_discriminants(strum(
+        message = "raw            -   Fully custom transaction: recipient, value, and raw calldata"
+    ))]
+    /// Fully custom transaction: recipient, value, and raw calldata
+    Raw(Raw),
+}
+
+// ---------------------------------------------------------------- transfer
+
+#[derive(Debug, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(input_context = EvmChainContext)]
+#[interactive_clap(output_context = TransferContext)]
+pub struct Transfer {
+    /// Recipient address (0x...):
+    receiver: EthAddress,
+    #[interactive_clap(skip_default_input_arg)]
+    /// Amount to transfer (e.g. 0.5 ETH):
+    amount: EthAmount,
+    #[interactive_clap(named_arg)]
+    /// Derivation path - determines the acting foreign account
+    derivation_path: crate::commands::construct::sign_as::DerivationPath,
+}
+
+#[derive(Clone)]
+pub struct TransferContext(SpecContext);
+
+impl TransferContext {
+    pub fn from_previous_context(
+        previous_context: EvmChainContext,
+        scope: &<Transfer as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
+    ) -> color_eyre::eyre::Result<Self> {
+        let spec = EvmActionSpec {
+            to: scope.receiver.as_bytes(),
+            value_wei: scope.amount.wei,
+            data: Vec::new(),
+            summary: format!("transfer {} to {}", scope.amount, scope.receiver),
+        };
+        Ok(Self(previous_context.into_spec_context(spec)))
+    }
+}
+
+impl From<TransferContext> for SpecContext {
+    fn from(item: TransferContext) -> Self {
+        item.0
+    }
+}
+
+impl Transfer {
+    fn input_amount(_context: &EvmChainContext) -> color_eyre::eyre::Result<Option<EthAmount>> {
+        Ok(Some(
+            CustomType::new("Amount to transfer (e.g. 0.5 ETH, 2 gwei, 1000 wei):").prompt()?,
+        ))
+    }
+}
+
+// ------------------------------------------------------------ contract-call
+
+#[derive(Debug, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(input_context = EvmChainContext)]
+#[interactive_clap(output_context = ContractCallContext)]
+pub struct ContractCall {
+    /// Contract address (0x...):
+    contract: EthAddress,
+    #[interactive_clap(skip_default_input_arg)]
+    /// Attached native value (usually 0 ETH):
+    attached_value: EthAmount,
+    #[interactive_clap(subcommand)]
+    calldata: Calldata,
+}
+
+#[derive(Clone)]
+pub struct ContractCallContext {
+    chain_context: EvmChainContext,
+    contract: EthAddress,
+    attached_value: EthAmount,
+}
+
+impl ContractCallContext {
+    pub fn from_previous_context(
+        previous_context: EvmChainContext,
+        scope: &<ContractCall as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
+    ) -> color_eyre::eyre::Result<Self> {
+        Ok(Self {
+            chain_context: previous_context,
+            contract: scope.contract,
+            attached_value: scope.attached_value,
+        })
+    }
+
+    fn into_spec_context(self, calldata: Vec<u8>, call_description: &str) -> SpecContext {
+        let summary = if self.attached_value.wei == 0 {
+            format!("{call_description} on {}", self.contract)
+        } else {
+            format!(
+                "{call_description} on {} with {}",
+                self.contract, self.attached_value
+            )
+        };
+        let spec = EvmActionSpec {
+            to: self.contract.as_bytes(),
+            value_wei: self.attached_value.wei,
+            data: calldata,
+            summary,
+        };
+        self.chain_context.into_spec_context(spec)
+    }
+}
+
+impl ContractCall {
+    fn input_attached_value(
+        _context: &EvmChainContext,
+    ) -> color_eyre::eyre::Result<Option<EthAmount>> {
+        Ok(Some(
+            CustomType::new("Attached native value (usually 0 ETH):")
+                .with_starting_input("0 ETH")
+                .prompt()?,
+        ))
+    }
+}
+
+#[derive(Debug, EnumDiscriminants, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(context = ContractCallContext)]
+#[strum_discriminants(derive(EnumMessage, EnumIter))]
+/// How do you want to provide the calldata?
+pub enum Calldata {
+    #[strum_discriminants(strum(
+        message = "function-signature  -   Type a signature like transfer(address,uint256) and the args (encoded locally)"
+    ))]
+    /// Type a signature like transfer(address,uint256) and the args (encoded locally)
+    FunctionSignature(FunctionSignature),
+    #[strum_discriminants(strum(
+        message = "raw-calldata        -   Paste pre-encoded calldata hex (e.g. from cast/foundry)"
+    ))]
+    /// Paste pre-encoded calldata hex (e.g. from cast/foundry)
+    RawCalldata(RawCalldata),
+}
+
+#[derive(Debug, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(input_context = ContractCallContext)]
+#[interactive_clap(output_context = FunctionSignatureContext)]
+pub struct FunctionSignature {
+    /// Function signature (e.g. transfer(address,uint256) or pause()):
+    signature: String,
+    #[interactive_clap(skip_default_input_arg)]
+    /// Function arguments as a JSON array (e.g. ["0xabc...", "1000"]; [] for none):
+    args: String,
+    #[interactive_clap(named_arg)]
+    /// Derivation path - determines the acting foreign account
+    derivation_path: crate::commands::construct::sign_as::DerivationPath,
+}
+
+#[derive(Clone)]
+pub struct FunctionSignatureContext(SpecContext);
+
+impl FunctionSignatureContext {
+    pub fn from_previous_context(
+        previous_context: ContractCallContext,
+        scope: &<FunctionSignature as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
+    ) -> color_eyre::eyre::Result<Self> {
+        let (calldata, canonical_signature) =
+            crate::chains::evm::abi::encode_calldata(&scope.signature, &scope.args)?;
+        let call_description = format!("call {canonical_signature}");
+        Ok(Self(
+            previous_context.into_spec_context(calldata, &call_description),
+        ))
+    }
+}
+
+impl From<FunctionSignatureContext> for SpecContext {
+    fn from(item: FunctionSignatureContext) -> Self {
+        item.0
+    }
+}
+
+impl FunctionSignature {
+    fn input_args(_context: &ContractCallContext) -> color_eyre::eyre::Result<Option<String>> {
+        let args = inquire::Text::new(
+            "Function arguments as a JSON array (e.g. [\"0xabc...\", \"1000\"]):",
+        )
+        .with_initial_value("[]")
+        .prompt()?;
+        Ok(Some(args))
+    }
+}
+
+#[derive(Debug, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(input_context = ContractCallContext)]
+#[interactive_clap(output_context = RawCalldataContext)]
+pub struct RawCalldata {
+    /// Calldata hex (0x...):
+    calldata: HexBytes,
+    #[interactive_clap(named_arg)]
+    /// Derivation path - determines the acting foreign account
+    derivation_path: crate::commands::construct::sign_as::DerivationPath,
+}
+
+#[derive(Clone)]
+pub struct RawCalldataContext(SpecContext);
+
+impl RawCalldataContext {
+    pub fn from_previous_context(
+        previous_context: ContractCallContext,
+        scope: &<RawCalldata as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
+    ) -> color_eyre::eyre::Result<Self> {
+        let call_description = if scope.calldata.0.len() >= 4 {
+            format!(
+                "call with raw calldata (selector 0x{})",
+                hex::encode(&scope.calldata.0[..4])
+            )
+        } else {
+            "call with raw calldata".to_string()
+        };
+        Ok(Self(
+            previous_context.into_spec_context(scope.calldata.0.clone(), &call_description),
+        ))
+    }
+}
+
+impl From<RawCalldataContext> for SpecContext {
+    fn from(item: RawCalldataContext) -> Self {
+        item.0
+    }
+}
+
+// ---------------------------------------------------------------------- raw
+
+#[derive(Debug, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(input_context = EvmChainContext)]
+#[interactive_clap(output_context = RawContext)]
+pub struct Raw {
+    /// Recipient address (0x...):
+    to: EthAddress,
+    #[interactive_clap(skip_default_input_arg)]
+    /// Attached native value (e.g. 0 ETH):
+    value: EthAmount,
+    /// Transaction data hex (0x...; empty for none):
+    data: HexBytes,
+    #[interactive_clap(named_arg)]
+    /// Derivation path - determines the acting foreign account
+    derivation_path: crate::commands::construct::sign_as::DerivationPath,
+}
+
+#[derive(Clone)]
+pub struct RawContext(SpecContext);
+
+impl RawContext {
+    pub fn from_previous_context(
+        previous_context: EvmChainContext,
+        scope: &<Raw as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
+    ) -> color_eyre::eyre::Result<Self> {
+        let spec = EvmActionSpec {
+            to: scope.to.as_bytes(),
+            value_wei: scope.value.wei,
+            data: scope.data.0.clone(),
+            summary: format!(
+                "raw transaction to {}: value {}, {} bytes of data",
+                scope.to,
+                scope.value,
+                scope.data.0.len()
+            ),
+        };
+        Ok(Self(previous_context.into_spec_context(spec)))
+    }
+}
+
+impl From<RawContext> for SpecContext {
+    fn from(item: RawContext) -> Self {
+        item.0
+    }
+}
+
+impl Raw {
+    fn input_value(_context: &EvmChainContext) -> color_eyre::eyre::Result<Option<EthAmount>> {
+        Ok(Some(
+            CustomType::new("Attached native value (e.g. 0 ETH):")
+                .with_starting_input("0 ETH")
+                .prompt()?,
+        ))
+    }
+}
