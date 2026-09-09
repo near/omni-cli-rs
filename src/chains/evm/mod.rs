@@ -418,7 +418,7 @@ mod tests {
         let verifying_key = signing_key.verifying_key();
 
         // The address our code derives from the MPC public key
-        let uncompressed = verifying_key.to_encoded_point(false);
+        let uncompressed = verifying_key.to_sec1_point(false);
         let mut pk64 = [0u8; 64];
         pk64.copy_from_slice(&uncompressed.as_bytes()[1..]);
         let expected_address = address_from_derived_pk(&pk64);
@@ -467,7 +467,7 @@ mod tests {
         let recovered =
             k256::ecdsa::VerifyingKey::recover_from_prehash(&payload, &signature, recovery_id)
                 .unwrap();
-        let recovered_point = recovered.to_encoded_point(false);
+        let recovered_point = recovered.to_sec1_point(false);
         let mut recovered_pk64 = [0u8; 64];
         recovered_pk64.copy_from_slice(&recovered_point.as_bytes()[1..]);
         assert_eq!(address_from_derived_pk(&recovered_pk64), expected_address);

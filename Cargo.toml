@@ -20,22 +20,24 @@ tokio = { version = "1.0", features = ["rt-multi-thread"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.57"
 toml = "0.8"
-base64 = "0.22"
+base64 = "0.23"
 hex = "0.4"
 
 shell-words = "1.0.0"
 color-eyre = "0.6"
-dirs = "5"
+dirs = "7"
 
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "blocking",
     "json",
-    "rustls-tls",
+    "query",
+    "rustls",
+    "webpki-roots",
 ] }
 
 near-api = "0.8.6"
-near-crypto = "0.36"
-near-primitives = "0.36"
+near-crypto = "0.37"
+near-primitives = "0.37"
 near-gas = "0.3"
 near-token = { version = "0.3", features = [
     "serde",
@@ -46,7 +48,7 @@ near-token = { version = "0.3", features = [
 interactive-clap = "0.3"
 interactive-clap-derive = "0.3"
 
-near-cli-rs = { version = "0.27", default-features = false }
+near-cli-rs = { version = "0.30", default-features = false }
 
 omni-transaction = { version = "0.5.0", default-features = false, features = [
     "evm",
@@ -57,14 +59,14 @@ omni-transaction = { version = "0.5.0", default-features = false, features = [
     "ton",
     "serde_json",
 ] }
-sha3 = "0.10"
-sha2 = "0.10"
-ripemd = "0.1"
-bech32 = "0.11"
+sha3 = "0.12"
+sha2 = "0.11"
+ripemd = "0.2"
+bech32 = "0.12"
 bs58 = "0.5"
 # Runtime secp256k1 verification: maps MPC signatures to the UTXO inputs they
 # sign (receipt order is not guaranteed to match sign-action order).
-k256 = { version = "0.13", features = ["ecdsa"] }
+k256 = { version = "0.14", features = ["ecdsa"] }
 
 # Local-only ABI encoding for `function-signature` calldata input (cast-style),
 # and keccak256 / checksummed address formatting. Encoding only - no RPC stack.
@@ -72,6 +74,6 @@ alloy-primitives = "1"
 alloy-dyn-abi = "1"
 
 [dev-dependencies]
-k256 = { version = "0.13", features = ["ecdsa"] }
-ed25519-dalek = "2"
+k256 = { version = "0.14", features = ["ecdsa"] }
+ed25519-dalek = "3"
 

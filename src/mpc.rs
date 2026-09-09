@@ -125,18 +125,14 @@ pub fn secp256k1_bytes(public_key: &near_crypto::PublicKey) -> color_eyre::eyre:
             bytes.copy_from_slice(key.as_ref());
             Ok(bytes)
         }
-        near_crypto::PublicKey::ED25519(_) => {
-            Err(eyre!("Expected a secp256k1 derived key, got: {public_key}"))
-        }
+        other => Err(eyre!("Expected a secp256k1 derived key, got: {other}")),
     }
 }
 
 pub fn ed25519_bytes(public_key: &near_crypto::PublicKey) -> color_eyre::eyre::Result<[u8; 32]> {
     match public_key {
         near_crypto::PublicKey::ED25519(key) => Ok(key.0),
-        near_crypto::PublicKey::SECP256K1(_) => {
-            Err(eyre!("Expected an ed25519 derived key, got: {public_key}"))
-        }
+        other => Err(eyre!("Expected an ed25519 derived key, got: {other}")),
     }
 }
 

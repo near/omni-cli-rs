@@ -472,7 +472,7 @@ mod tests {
     #[test]
     fn bip143_sighash_and_shuffled_assembly_roundtrip() {
         let signing_key = SigningKey::from_bytes(&[0x51u8; 32].into()).unwrap();
-        let uncompressed_point = signing_key.verifying_key().to_encoded_point(false);
+        let uncompressed_point = signing_key.verifying_key().to_sec1_point(false);
         let mut uncompressed = [0u8; 64];
         uncompressed.copy_from_slice(&uncompressed_point.as_bytes()[1..]);
         let public_key = compress_public_key(&uncompressed);
