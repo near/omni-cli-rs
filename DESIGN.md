@@ -200,19 +200,20 @@ With `sign-as-dao` the render appears right after the fork; with
 ## 6. Proposal envelope (DAO route only)
 
 A 32-byte sighash is unreviewable on its own, so the full unsigned transaction
-rides along in the SputnikDAO `description` field. Layout: the human-readable
-intent line **first** (so AstroDAO-style UIs show something legible), then the
-base64 envelope:
+rides along in the SputnikDAO `description` field. The description IS the
+envelope: pretty-printed JSON, directly readable in any DAO UI and parseable
+by any tool - no wrapping, no base64. Human-relevant fields (version, intent,
+chain, path) come first:
 
 ```json
 {
-  "omni": 1,                       // envelope version
-  "family": "evm",
-  "chain": "base",                 // registry key
-  "path": "base-locker-admin",     // derivation path = acting foreign account
-  "unsigned_tx": "<base64, omni-transaction-rs serialization>",
+  "omni": 1,
   "intent": "Pause Base locker during incident #42",
-  "meta": { "nonce": 17, "expires": null, "builder_version": "0.1.0" }
+  "family": "evm",
+  "chain": "base",
+  "path": "base-locker-admin",
+  "unsigned_tx": { ...family-specific serialization... },
+  "meta": { "nonce": 17, "builder_version": "0.1.0" }
 }
 ```
 
@@ -416,7 +417,7 @@ wrong trade.
 | Governance | SputnikDAO v2 only | Pluggable governance trait |
 | Chains | Everything omni-transaction-rs offers, grouped into 6 family adapters | EVM-first subset |
 | Execution routes | One `construct` flow; route = `sign-as-account` / `sign-as-dao` enum step | Separate `send` and `proposal create` commands (duplicated construction logic) |
-| Unsigned tx storage | Base64 envelope in proposal description, intent line first | Deterministic rebuild from inputs (fragile across versions); off-chain registry (availability dependency) |
+| Unsigned tx storage | Pretty-printed JSON envelope as the proposal description, intent field first | Deterministic rebuild from inputs (fragile across versions); off-chain registry (availability dependency) |
 | Batching | One foreign tx per proposal | Multi-tx envelopes (gas caps, partial-broadcast states) |
 | Derivation paths | Free-form, no discovery | History-scan discovery; convention + local registry |
 | Signature retrieval | `broadcast <near-tx-hash>`; vote echoes the hash when threshold crossed | Indexer lookup (external dependency); vote-and-finalize fusion |

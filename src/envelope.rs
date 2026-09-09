@@ -2,19 +2,34 @@
 //! that rides along in the SputnikDAO proposal description so reviewers can
 //! verify, byte for byte, what the MPC is being asked to sign.
 //!
-//! Layout of a description: the human-readable intent line first (so DAO UIs
-//! show something legible), then a separator, then base64-encoded JSON.
+//! The description IS the envelope: pretty-printed JSON of the schema below,
+//! directly readable in any DAO UI and parseable by any tool - no wrapping,
+//! no base64.
+//!
+//! ```json
+//! {
+//!   "omni": 1,
+//!   "intent": "Pause Base locker during incident #42",
+//!   "family": "evm",
+//!   "chain": "base",
+//!   "path": "omni-1",
+//!   "unsigned_tx": { ... },
+//!   "meta": { "builder_version": "0.1.0" }
+//! }
+//! ```
 
-use base64::Engine;
 use color_eyre::eyre::WrapErr;
 
-pub const SEPARATOR: &str = "---omni-envelope-v1---";
 pub const VERSION: u32 = 1;
 
+/// Field order is the serialization order - keep the human-relevant fields
+/// (version, intent, chain, path) at the top of the rendered JSON.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Envelope {
     /// Envelope format version
     pub omni: u32,
+    /// Human-readable intent for reviewers
+    pub intent: String,
     /// Chain family, e.g. "evm"
     pub family: String,
     /// Chain registry key, e.g. "base"
@@ -23,8 +38,6 @@ pub struct Envelope {
     pub path: String,
     /// Full unsigned transaction (family-specific serialization)
     pub unsigned_tx: serde_json::Value,
-    /// Human-readable intent, duplicated from the description head
-    pub intent: String,
     #[serde(default)]
     pub meta: EnvelopeMeta,
 }
@@ -42,9 +55,8 @@ pub struct EnvelopeMeta {
 const SIZE_WARNING_BYTES: usize = 16 * 1024;
 
 pub fn encode_description(envelope: &Envelope) -> color_eyre::eyre::Result<String> {
-    let json = serde_json::to_vec(envelope).wrap_err("Failed to serialize the envelope")?;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(&json);
-    let description = format!("{}\n\n{SEPARATOR}{encoded}", envelope.intent);
+    let description =
+        serde_json::to_string_pretty(envelope).wrap_err("Failed to serialize the envelope")?;
     if description.len() > SIZE_WARNING_BYTES {
         eprintln!(
             "Warning: the proposal description is {} KB; it is stored in the DAO's state \
@@ -57,11 +69,7 @@ pub fn encode_description(envelope: &Envelope) -> color_eyre::eyre::Result<Strin
 
 #[allow(dead_code)] // used by the upcoming `omni proposal review` and `omni broadcast` commands
 pub fn decode_description(description: &str) -> Option<Envelope> {
-    let encoded = description.split(SEPARATOR).nth(1)?.trim();
-    let json = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .ok()?;
-    serde_json::from_slice(&json).ok()
+    serde_json::from_str(description.trim()).ok()
 }
 
 #[cfg(test)]
@@ -69,23 +77,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn roundtrip() {
+    fn description_is_readable_json() {
         let envelope = Envelope {
             omni: VERSION,
+            intent: "Pause Base locker".to_string(),
             family: "evm".to_string(),
             chain: "base".to_string(),
-            path: "base-locker-admin".to_string(),
+            path: "omni-1".to_string(),
             unsigned_tx: serde_json::json!({"nonce": 17}),
-            intent: "Pause Base locker".to_string(),
             meta: EnvelopeMeta {
                 nonce: Some(17),
                 builder_version: "0.1.0".to_string(),
             },
         };
         let description = encode_description(&envelope).unwrap();
-        assert!(description.starts_with("Pause Base locker\n\n"));
+
+        // Plain pretty-printed JSON, human-relevant fields near the top
+        assert!(description.starts_with("{\n"));
+        let omni_pos = description.find("\"omni\"").unwrap();
+        let intent_pos = description.find("\"intent\"").unwrap();
+        let tx_pos = description.find("\"unsigned_tx\"").unwrap();
+        assert!(omni_pos < intent_pos && intent_pos < tx_pos);
+
         let decoded = decode_description(&description).unwrap();
         assert_eq!(decoded.chain, "base");
+        assert_eq!(decoded.intent, "Pause Base locker");
         assert_eq!(decoded.unsigned_tx["nonce"], 17);
+
+        assert!(decode_description("not an envelope").is_none());
     }
 }
