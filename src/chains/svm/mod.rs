@@ -134,10 +134,7 @@ fn create_account_with_seed(
 }
 
 /// `SystemInstruction::InitializeNonceAccount` (bincode enum index 6).
-fn initialize_nonce_account(
-    nonce_account: SolanaAddress,
-    authority: SolanaAddress,
-) -> Instruction {
+fn initialize_nonce_account(nonce_account: SolanaAddress, authority: SolanaAddress) -> Instruction {
     let mut data = 6u32.to_le_bytes().to_vec();
     data.extend_from_slice(&authority.0);
     Instruction {
@@ -256,13 +253,11 @@ impl ChainAdapter for SvmAdapter {
                             .map_err(|err| eyre!("Invalid --nonce-account '{address}': {err}"))?,
                         None => nonce_account,
                     };
-                    let nonce_info = rpc::nonce_account(
-                        &chain.rpc_url,
-                        &nonce_account.to_base58(),
-                    )?
-                    .wrap_err_with(|| {
-                        format!(
-                            "The DAO route on SVM needs a durable nonce account with \
+                    let nonce_info =
+                        rpc::nonce_account(&chain.rpc_url, &nonce_account.to_base58())?
+                            .wrap_err_with(|| {
+                                format!(
+                                    "The DAO route on SVM needs a durable nonce account with \
                              authority {payer_base58}, and none was found at {}.\n\
                              - For an account-owned derived address, create the \
                              deterministic one (signed by the derived key itself):\n  \
@@ -274,10 +269,10 @@ impl ChainAdapter for SvmAdapter {
                              solana create-nonce-account <new-keypair.json> 0.0015 \
                              --nonce-authority {payer_base58}\n  \
                              ... then pass it via --nonce-account <address>.",
-                            nonce_account.to_base58(),
-                            chain.chain_key,
-                        )
-                    })?;
+                                    nonce_account.to_base58(),
+                                    chain.chain_key,
+                                )
+                            })?;
                     if nonce_info.authority != payer_base58 {
                         return Err(eyre!(
                             "The nonce account {} has authority {}, not the derived \
@@ -396,7 +391,7 @@ fn format_native(lamports: u64, chain: &ResolvedChain) -> String {
         lamports,
         &chain.symbol,
         "lamports",
-        10u64.pow(chain.decimals as u32),
+        10u64.pow(u32::from(chain.decimals)),
     )
 }
 
@@ -452,7 +447,10 @@ mod tests {
             nonce_account_override: None,
         };
         let near_pk = near_crypto::PublicKey::ED25519(near_crypto::ED25519PublicKey(payer_bytes));
-        assert_eq!(adapter.derived_address(&near_pk).unwrap(), payer.to_base58());
+        assert_eq!(
+            adapter.derived_address(&near_pk).unwrap(),
+            payer.to_base58()
+        );
     }
 
     /// The durable-nonce system instructions must match the bincode layout of
@@ -473,8 +471,14 @@ mod tests {
         assert!(advance.accounts[0].is_writable && !advance.accounts[0].is_signer);
         assert!(advance.accounts[2].is_signer && !advance.accounts[2].is_writable);
 
-        let create =
-            create_account_with_seed(base, nonce, NONCE_SEED, 1_500_000, NONCE_ACCOUNT_SIZE, SYSTEM_PROGRAM);
+        let create = create_account_with_seed(
+            base,
+            nonce,
+            NONCE_SEED,
+            1_500_000,
+            NONCE_ACCOUNT_SIZE,
+            SYSTEM_PROGRAM,
+        );
         // u32 index + base(32) + u64 seed len + seed + lamports u64 + space u64 + owner(32)
         assert_eq!(
             create.data.len(),

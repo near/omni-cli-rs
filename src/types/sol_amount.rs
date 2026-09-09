@@ -24,9 +24,7 @@ impl std::str::FromStr for SolAmount {
             "sol" => LAMPORTS_PER_SOL,
             "lamports" | "lamport" => 1,
             _ => {
-                return Err(format!(
-                    "Unknown unit '{unit}' (expected SOL or lamports)"
-                ));
+                return Err(format!("Unknown unit '{unit}' (expected SOL or lamports)"));
             }
         };
         let (int_part, frac_part) = match number_part.split_once('.') {
@@ -49,7 +47,9 @@ impl std::str::FromStr for SolAmount {
                 .checked_pow(frac_part.len() as u32)
                 .filter(|scale| multiplier % scale == 0)
                 .ok_or_else(|| format!("Too much precision for the unit: '{s}'"))?;
-            let frac_value: u64 = frac_part.parse().map_err(|_| format!("Invalid amount: '{s}'"))?;
+            let frac_value: u64 = frac_part
+                .parse()
+                .map_err(|_| format!("Invalid amount: '{s}'"))?;
             lamports = lamports
                 .checked_add(frac_value * (multiplier / scale))
                 .ok_or_else(|| format!("Amount out of range: '{s}'"))?;
@@ -88,18 +88,35 @@ mod tests {
 
     #[test]
     fn parses_and_displays() {
-        assert_eq!(SolAmount::from_str("0.5 SOL").unwrap().lamports, 500_000_000);
+        assert_eq!(
+            SolAmount::from_str("0.5 SOL").unwrap().lamports,
+            500_000_000
+        );
         assert_eq!(SolAmount::from_str("5000 lamports").unwrap().lamports, 5000);
-        assert_eq!(SolAmount::from_str("1 sol").unwrap().lamports, LAMPORTS_PER_SOL);
+        assert_eq!(
+            SolAmount::from_str("1 sol").unwrap().lamports,
+            LAMPORTS_PER_SOL
+        );
         assert!(SolAmount::from_str("100").is_err());
         assert!(SolAmount::from_str("0.5 lamports").is_err());
         assert_eq!(
-            SolAmount { lamports: 500_000_000 }.to_string(),
+            SolAmount {
+                lamports: 500_000_000
+            }
+            .to_string(),
             "0.5 SOL"
         );
         assert_eq!(
-            SolAmount::from_str(&SolAmount { lamports: 123_456_789 }.to_string()).unwrap(),
-            SolAmount { lamports: 123_456_789 }
+            SolAmount::from_str(
+                &SolAmount {
+                    lamports: 123_456_789
+                }
+                .to_string()
+            )
+            .unwrap(),
+            SolAmount {
+                lamports: 123_456_789
+            }
         );
     }
 }

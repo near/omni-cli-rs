@@ -57,9 +57,9 @@ pub fn encode_calldata(
             serde_json::Value::String(s) => s.clone(),
             other => other.to_string(),
         };
-        let value = ty.coerce_str(&arg_str).wrap_err_with(|| {
-            format!("Argument #{index} ('{arg_str}') is not a valid `{ty}`")
-        })?;
+        let value = ty
+            .coerce_str(&arg_str)
+            .wrap_err_with(|| format!("Argument #{index} ('{arg_str}') is not a valid `{ty}`"))?;
         values.push(value);
     }
 

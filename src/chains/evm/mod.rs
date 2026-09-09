@@ -55,15 +55,14 @@ impl ChainAdapter for EvmAdapter {
     ) -> color_eyre::eyre::Result<BuiltTransaction> {
         let pk = crate::mpc::secp256k1_bytes(derived_public_key)?;
         let derived_address = address_from_derived_pk(&pk);
-        let params = fetch_tx_params(chain, derived_address, &self.spec, latency).wrap_err_with(
-            || {
+        let params =
+            fetch_tx_params(chain, derived_address, &self.spec, latency).wrap_err_with(|| {
                 format!(
                     "Failed to prepare the transaction on '{}' for derived sender {}",
                     chain.chain_key,
                     checksum(derived_address)
                 )
-            },
-        )?;
+            })?;
         let chain_id = chain.chain_id.wrap_err_with(|| {
             format!(
                 "EVM chain '{}' ({}) needs a chain_id in the omni config",
@@ -72,14 +71,20 @@ impl ChainAdapter for EvmAdapter {
         })?;
         let tx = build_unsigned(chain_id, &self.spec, &params);
         let payload = sighash(&tx);
-        let display = describe(chain, &tx, owner, derivation_path, derived_address, &self.spec);
+        let display = describe(
+            chain,
+            &tx,
+            owner,
+            derivation_path,
+            derived_address,
+            &self.spec,
+        );
         Ok(BuiltTransaction {
             unsigned_tx: serde_json::to_value(&tx)?,
             payloads: vec![payload.to_vec()],
             display,
         })
     }
-
 }
 
 /// Combines the unsigned EVM transaction with the MPC signature and
@@ -197,7 +202,7 @@ pub fn checksum(address: [u8; 20]) -> String {
 }
 
 fn format_native(wei: u128, chain: &ResolvedChain) -> String {
-    let unit = 10u128.pow(chain.decimals as u32);
+    let unit = 10u128.pow(u32::from(chain.decimals));
     if wei == 0 {
         format!("0 {}", chain.symbol)
     } else if wei.is_multiple_of(unit) {
@@ -231,7 +236,7 @@ pub fn describe(
     derived_address: [u8; 20],
     spec: &EvmActionSpec,
 ) -> String {
-    let to = tx.to.map(checksum).unwrap_or_else(|| "<create>".to_string());
+    let to = tx.to.map_or_else(|| "<create>".to_string(), checksum);
     let max_cost_wei = tx.gas_limit.saturating_mul(tx.max_fee_per_gas);
     format!(
         "\n\
@@ -284,7 +289,8 @@ pub fn signature_from_mpc(
             "Expected a secp256k1 MPC signature for an EVM chain, got an ed25519 one"
         ));
     };
-    let big_r = hex::decode(&big_r.affine_point).wrap_err("MPC signature big_r is not valid hex")?;
+    let big_r =
+        hex::decode(&big_r.affine_point).wrap_err("MPC signature big_r is not valid hex")?;
     if big_r.len() != 33 {
         return Err(eyre!(
             "MPC signature big_r must be a 33-byte compressed point, got {} bytes",
@@ -299,7 +305,7 @@ pub fn signature_from_mpc(
         ));
     }
     Ok(omni_transaction::evm::types::Signature {
-        v: *recovery_id as u64,
+        v: u64::from(*recovery_id),
         r: big_r[1..].to_vec(),
         s,
     })
@@ -316,7 +322,7 @@ mod tests {
             family: FAMILY.to_string(),
             near_network: "testnet".to_string(),
             rpc_url: rpc_url.to_string(),
-            chain_id: Some(11155111),
+            chain_id: Some(11_155_111),
             explorer_tx_url: None,
             symbol: "ETH".to_string(),
             decimals: 18,
@@ -350,7 +356,7 @@ mod tests {
             max_fee_per_gas: 20_000_000_000,
             max_priority_fee_per_gas: 1_000_000_000,
         };
-        let tx = build_unsigned(11155111, &spec, &params);
+        let tx = build_unsigned(11_155_111, &spec, &params);
         let payload = sighash(&tx);
 
         // Sign the payload like the MPC would report it
@@ -373,7 +379,7 @@ mod tests {
         };
 
         let omni_signature = signature_from_mpc(&response).unwrap();
-        assert_eq!(omni_signature.v, recovery_id.to_byte() as u64);
+        assert_eq!(omni_signature.v, u64::from(recovery_id.to_byte()));
         assert_eq!(omni_signature.r, r_bytes.to_vec());
         assert_eq!(omni_signature.s, s_bytes.to_vec());
 

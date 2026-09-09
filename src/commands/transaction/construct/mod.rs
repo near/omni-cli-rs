@@ -31,9 +31,7 @@ pub enum Family {
     ))]
     /// EVM chains (Ethereum, Base, Arbitrum, ...)
     Evm(self::evm::EvmChain),
-    #[strum_discriminants(strum(
-        message = "svm         -   SVM chains (Solana, Fogo, ...)"
-    ))]
+    #[strum_discriminants(strum(message = "svm         -   SVM chains (Solana, Fogo, ...)"))]
     /// SVM chains (Solana, Fogo, ...)
     Svm(self::svm::SvmChain),
     #[strum_discriminants(strum(
@@ -47,7 +45,9 @@ pub enum Family {
     #[strum_discriminants(strum(message = "sui         -   Sui"))]
     /// Sui
     Sui(self::sui::SuiChain),
-    #[strum_discriminants(strum(message = "ton         -   TON (v5r1 wallet, auto-deployed on first use)"))]
+    #[strum_discriminants(strum(
+        message = "ton         -   TON (v5r1 wallet, auto-deployed on first use)"
+    ))]
     /// TON (v5r1 wallet, auto-deployed on first use)
     Ton(self::ton::TonChain),
 }

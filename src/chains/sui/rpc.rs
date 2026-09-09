@@ -42,7 +42,11 @@ fn parse_u64(value: &serde_json::Value) -> color_eyre::eyre::Result<u64> {
 }
 
 pub fn reference_gas_price(rpc_url: &str) -> color_eyre::eyre::Result<u64> {
-    parse_u64(&call(rpc_url, "suix_getReferenceGasPrice", serde_json::json!([]))?)
+    parse_u64(&call(
+        rpc_url,
+        "suix_getReferenceGasPrice",
+        serde_json::json!([]),
+    )?)
 }
 
 /// A SUI gas coin owned by an address.

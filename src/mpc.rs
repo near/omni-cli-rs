@@ -54,9 +54,11 @@ pub fn to_near_api_network(
     Ok(near_api::NetworkConfig {
         network_name: network_config.network_name.clone(),
         rpc_endpoints: vec![near_api::RPCEndpoint::new(
-            network_config.rpc_url.as_ref().parse().wrap_err_with(|| {
-                format!("Invalid NEAR RPC url: {}", network_config.rpc_url)
-            })?,
+            network_config
+                .rpc_url
+                .as_ref()
+                .parse()
+                .wrap_err_with(|| format!("Invalid NEAR RPC url: {}", network_config.rpc_url))?,
         )],
         ..base
     })
@@ -109,23 +111,25 @@ pub fn derived_public_key(
         .wrap_err("MPC contract returned an unparseable public key")
 }
 
-pub fn secp256k1_bytes(
-    public_key: &near_crypto::PublicKey,
-) -> color_eyre::eyre::Result<[u8; 64]> {
+pub fn secp256k1_bytes(public_key: &near_crypto::PublicKey) -> color_eyre::eyre::Result<[u8; 64]> {
     match public_key {
         near_crypto::PublicKey::SECP256K1(key) => {
             let mut bytes = [0u8; 64];
             bytes.copy_from_slice(key.as_ref());
             Ok(bytes)
         }
-        other => Err(eyre!("Expected a secp256k1 derived key, got: {other}")),
+        near_crypto::PublicKey::ED25519(_) => {
+            Err(eyre!("Expected a secp256k1 derived key, got: {public_key}"))
+        }
     }
 }
 
 pub fn ed25519_bytes(public_key: &near_crypto::PublicKey) -> color_eyre::eyre::Result<[u8; 32]> {
     match public_key {
         near_crypto::PublicKey::ED25519(key) => Ok(key.0),
-        other => Err(eyre!("Expected an ed25519 derived key, got: {other}")),
+        near_crypto::PublicKey::SECP256K1(_) => {
+            Err(eyre!("Expected an ed25519 derived key, got: {public_key}"))
+        }
     }
 }
 
@@ -246,19 +250,19 @@ pub fn extract_signature_responses(
     outcome: &near_primitives::views::FinalExecutionOutcomeView,
 ) -> Vec<MpcSignatureResponse> {
     let final_status_value = match &outcome.status {
-        near_primitives::views::FinalExecutionStatus::SuccessValue(value) => {
-            Some(value.as_slice())
-        }
+        near_primitives::views::FinalExecutionStatus::SuccessValue(value) => Some(value.as_slice()),
         _ => None,
     };
-    let receipt_values = outcome.receipts_outcome.iter().filter_map(|receipt| {
-        match &receipt.outcome.status {
-            near_primitives::views::ExecutionStatusView::SuccessValue(value) => {
-                Some(value.as_slice())
-            }
-            _ => None,
-        }
-    });
+    let receipt_values =
+        outcome
+            .receipts_outcome
+            .iter()
+            .filter_map(|receipt| match &receipt.outcome.status {
+                near_primitives::views::ExecutionStatusView::SuccessValue(value) => {
+                    Some(value.as_slice())
+                }
+                _ => None,
+            });
     final_status_value
         .into_iter()
         .chain(receipt_values)
@@ -284,7 +288,8 @@ mod tests {
             Some(MpcSignatureResponse::Ed25519 { .. })
         ));
 
-        let legacy = br#"{"big_r":{"affine_point":"02abcd"},"s":{"scalar":"ef01"},"recovery_id":0}"#;
+        let legacy =
+            br#"{"big_r":{"affine_point":"02abcd"},"s":{"scalar":"ef01"},"recovery_id":0}"#;
         assert!(matches!(
             parse_signature_response(legacy),
             Some(MpcSignatureResponse::Secp256k1 { recovery_id: 0, .. })

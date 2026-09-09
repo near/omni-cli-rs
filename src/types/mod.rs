@@ -6,8 +6,8 @@ pub mod eth_amount;
 pub mod hex_bytes;
 pub mod move_address;
 pub mod sol_amount;
-pub mod sui_amount;
 pub mod solana_address;
+pub mod sui_amount;
 pub mod ton_address;
 pub mod ton_amount;
 

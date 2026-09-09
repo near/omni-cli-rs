@@ -156,9 +156,11 @@ mod tests {
             "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
         );
         // Round trip through the parser
-        let script =
-            address_to_script_pubkey("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", BtcNetwork::Mainnet)
-                .unwrap();
+        let script = address_to_script_pubkey(
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            BtcNetwork::Mainnet,
+        )
+        .unwrap();
         assert_eq!(script, p2wpkh_script_pubkey(&pubkey));
         assert_eq!(script[..2], [0x00, 0x14]);
     }
@@ -166,11 +168,9 @@ mod tests {
     #[test]
     fn parses_legacy_and_rejects_wrong_network() {
         // The genesis coinbase address (P2PKH mainnet)
-        let script = address_to_script_pubkey(
-            "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
-            BtcNetwork::Mainnet,
-        )
-        .unwrap();
+        let script =
+            address_to_script_pubkey("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", BtcNetwork::Mainnet)
+                .unwrap();
         assert_eq!(script[0], 0x76);
         assert_eq!(script.len(), 25);
 

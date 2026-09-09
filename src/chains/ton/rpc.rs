@@ -21,10 +21,7 @@ pub struct WalletInfo {
     pub balance_nanotons: u64,
 }
 
-pub fn wallet_information(
-    base_url: &str,
-    address: &str,
-) -> color_eyre::eyre::Result<WalletInfo> {
+pub fn wallet_information(base_url: &str, address: &str) -> color_eyre::eyre::Result<WalletInfo> {
     let url = format!(
         "{}/getWalletInformation?address={address}",
         base_url.trim_end_matches('/')

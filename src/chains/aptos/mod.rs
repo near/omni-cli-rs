@@ -227,7 +227,7 @@ fn format_native(octas: u64, chain: &ResolvedChain) -> String {
         octas,
         &chain.symbol,
         "octas",
-        10u64.pow(chain.decimals as u32),
+        10u64.pow(u32::from(chain.decimals)),
     )
 }
 

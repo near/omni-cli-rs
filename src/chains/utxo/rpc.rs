@@ -10,7 +10,9 @@ fn get(base_url: &str, path: &str) -> color_eyre::eyre::Result<serde_json::Value
         .send()
         .wrap_err_with(|| format!("Failed to reach the Esplora API at {url}"))?;
     let status = response.status();
-    let body = response.text().wrap_err("Failed to read the Esplora response")?;
+    let body = response
+        .text()
+        .wrap_err("Failed to read the Esplora response")?;
     if !status.is_success() {
         return Err(eyre!("Esplora API error ({status}) from {path}: {body}"));
     }
@@ -73,9 +75,13 @@ pub fn broadcast_transaction(base_url: &str, tx_hex: &str) -> color_eyre::eyre::
         .send()
         .wrap_err_with(|| format!("Failed to reach the Esplora API at {url}"))?;
     let status = response.status();
-    let body = response.text().wrap_err("Failed to read the broadcast response")?;
+    let body = response
+        .text()
+        .wrap_err("Failed to read the broadcast response")?;
     if !status.is_success() {
-        return Err(eyre!("The Bitcoin network rejected the transaction: {body}"));
+        return Err(eyre!(
+            "The Bitcoin network rejected the transaction: {body}"
+        ));
     }
     Ok(body.trim().to_string())
 }

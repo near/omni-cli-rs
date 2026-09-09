@@ -290,9 +290,10 @@ impl RawCalldataContext {
         } else {
             "call with raw calldata".to_string()
         };
-        Ok(Self(
-            previous_context.into_spec_context(scope.calldata.0.clone(), &call_description),
-        ))
+        Ok(Self(previous_context.into_spec_context(
+            scope.calldata.0.clone(),
+            &call_description,
+        )))
     }
 }
 

@@ -18,7 +18,11 @@ impl std::str::FromStr for SuiAmount {
 
 impl std::fmt::Display for SuiAmount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", super::format_move_style_amount(self.mist, "SUI", "mist", MIST_PER_SUI))
+        write!(
+            f,
+            "{}",
+            super::format_move_style_amount(self.mist, "SUI", "mist", MIST_PER_SUI)
+        )
     }
 }
 

@@ -10,8 +10,8 @@ use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
 use omni_transaction::bitcoin::BitcoinTransaction;
 use omni_transaction::bitcoin::types::{
-    Amount, EcdsaSighashType, Hash, LockTime, OutPoint, ScriptBuf, Sequence, TransactionType,
-    TxIn, TxOut, Txid, Version, Witness,
+    Amount, EcdsaSighashType, Hash, LockTime, OutPoint, ScriptBuf, Sequence, TransactionType, TxIn,
+    TxOut, Txid, Version, Witness,
 };
 use omni_transaction::bitcoin::utils::serialize_ecdsa_signature;
 
@@ -20,8 +20,8 @@ use crate::config::ResolvedChain;
 use crate::mpc::MpcSignatureResponse;
 
 use self::address::{
-    BtcNetwork, address_to_script_pubkey, compress_public_key, p2wpkh_address,
-    p2wpkh_script_code, p2wpkh_script_pubkey, sha256d,
+    BtcNetwork, address_to_script_pubkey, compress_public_key, p2wpkh_address, p2wpkh_script_code,
+    p2wpkh_script_pubkey, sha256d,
 };
 
 pub const FAMILY: &str = "utxo";
@@ -307,9 +307,7 @@ pub fn assemble_and_broadcast(
                 k256::ecdsa::Signature::from_slice(raw.as_slice())
                     .is_ok_and(|sig| verifying_key.verify_prehash(digest, &sig).is_ok())
             })
-            .wrap_err_with(|| {
-                format!("No MPC signature verifies over input #{index}'s sighash")
-            })?;
+            .wrap_err_with(|| format!("No MPC signature verifies over input #{index}'s sighash"))?;
         let witness = vec![
             serialize_ecdsa_signature(raw.as_slice(), EcdsaSighashType::All as u8),
             public_key.to_vec(),
@@ -326,7 +324,7 @@ fn format_native(sats: u64, chain: &ResolvedChain) -> String {
         sats,
         &chain.symbol,
         "sats",
-        10u64.pow(chain.decimals as u32),
+        10u64.pow(u32::from(chain.decimals)),
     )
 }
 
@@ -390,7 +388,7 @@ mod tests {
             use sha2::{Digest, Sha256};
             let script_code = p2wpkh_script_code(&public_key);
             // Txids are stored display-order and serialized reversed (wire order).
-            let wire_txid = |txid: &Txid| -> Vec<u8> { txid.0.0.iter().rev().cloned().collect() };
+            let wire_txid = |txid: &Txid| -> Vec<u8> { txid.0.0.iter().rev().copied().collect() };
             let mut prevouts = Vec::new();
             let mut sequences = Vec::new();
             for txin in &tx.input {
@@ -418,7 +416,10 @@ mod tests {
             preimage.extend_from_slice(&0u32.to_le_bytes()); // locktime
             preimage.extend_from_slice(&1u32.to_le_bytes()); // SIGHASH_ALL
             let expected: [u8; 32] = Sha256::digest(Sha256::digest(&preimage)).into();
-            assert_eq!(digests[0], expected, "BIP143 preimage construction diverged");
+            assert_eq!(
+                digests[0], expected,
+                "BIP143 preimage construction diverged"
+            );
         }
 
         // Sign both digests like the MPC would report them - SHUFFLED
@@ -437,7 +438,9 @@ mod tests {
                             hex::encode(r)
                         ),
                     },
-                    s: crate::mpc::Scalar { scalar: hex::encode(s) },
+                    s: crate::mpc::Scalar {
+                        scalar: hex::encode(s),
+                    },
                     recovery_id: recovery_id.to_byte(),
                 }
             })

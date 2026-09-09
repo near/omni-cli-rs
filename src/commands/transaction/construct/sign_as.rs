@@ -90,9 +90,10 @@ fn build_unsigned_tx(
         context.adapter.derived_address(&derived_public_key)?
     );
 
-    let built = context
-        .adapter
-        .build(&chain, &derived_public_key, owner.as_str(), path, latency)?;
+    let built =
+        context
+            .adapter
+            .build(&chain, &derived_public_key, owner.as_str(), path, latency)?;
     eprintln!("{}", built.display);
     Ok((built, chain))
 }
@@ -159,7 +160,11 @@ impl SignAsAccount {
         context: &DerivationPathContext,
     ) -> color_eyre::eyre::Result<Option<near_cli_rs::types::account_id::AccountId>> {
         near_cli_rs::common::input_signer_account_id_from_used_account_list(
-            &context.spec_context.global_context.config.credentials_home_dir,
+            &context
+                .spec_context
+                .global_context
+                .config
+                .credentials_home_dir,
             "What NEAR account calls the MPC signer (owner of the derived foreign account)?",
         )
     }
@@ -273,10 +278,12 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
             global_context: item.spec_context.global_context,
             interacting_with_account_ids: vec![item.signer_account_id],
             get_prepopulated_transaction_after_getting_network_callback,
-            on_before_signing_callback: Arc::new(|_prepopulated_unsigned_transaction, _network_config| Ok(())),
-            on_before_sending_transaction_callback: Arc::new(|_signed_transaction, _network_config| {
-                Ok(String::new())
-            }),
+            on_before_signing_callback: Arc::new(
+                |_prepopulated_unsigned_transaction, _network_config| Ok(()),
+            ),
+            on_before_sending_transaction_callback: Arc::new(
+                |_signed_transaction, _network_config| Ok(String::new()),
+            ),
             on_after_sending_transaction_callback,
             on_sending_delegate_action_callback: None,
             sign_as_delegate_action: false,
@@ -332,7 +339,11 @@ impl SignAsDao {
         context: &DerivationPathContext,
     ) -> color_eyre::eyre::Result<Option<near_cli_rs::types::account_id::AccountId>> {
         near_cli_rs::common::input_non_signer_account_id_from_used_account_list(
-            &context.spec_context.global_context.config.credentials_home_dir,
+            &context
+                .spec_context
+                .global_context
+                .config
+                .credentials_home_dir,
             "What is the SputnikDAO account ID (owner of the derived foreign account)?",
         )
     }
@@ -341,7 +352,11 @@ impl SignAsDao {
         context: &DerivationPathContext,
     ) -> color_eyre::eyre::Result<Option<near_cli_rs::types::account_id::AccountId>> {
         near_cli_rs::common::input_signer_account_id_from_used_account_list(
-            &context.spec_context.global_context.config.credentials_home_dir,
+            &context
+                .spec_context
+                .global_context
+                .config
+                .credentials_home_dir,
             "What NEAR account submits the proposal (must have AddProposal permission)?",
         )
     }
@@ -384,8 +399,8 @@ impl From<SignAsDaoContext> for near_cli_rs::commands::ActionContext {
                 let proposal_bond =
                     crate::dao::fetch_proposal_bond(&api_network, &dao_account_id)?;
                 eprintln!(
-                    "Proposal bond: {} yoctoNEAR (returned unless the proposal is rejected)\n",
-                    proposal_bond
+                    "Proposal bond: {proposal_bond} yoctoNEAR (returned unless the \
+                     proposal is rejected)\n"
                 );
 
                 let sign_args_list: Vec<serde_json::Value> = built
@@ -442,10 +457,12 @@ impl From<SignAsDaoContext> for near_cli_rs::commands::ActionContext {
             global_context: item.spec_context.global_context,
             interacting_with_account_ids: vec![item.proposer_account_id, item.dao_account_id],
             get_prepopulated_transaction_after_getting_network_callback,
-            on_before_signing_callback: Arc::new(|_prepopulated_unsigned_transaction, _network_config| Ok(())),
-            on_before_sending_transaction_callback: Arc::new(|_signed_transaction, _network_config| {
-                Ok(String::new())
-            }),
+            on_before_signing_callback: Arc::new(
+                |_prepopulated_unsigned_transaction, _network_config| Ok(()),
+            ),
+            on_before_sending_transaction_callback: Arc::new(
+                |_signed_transaction, _network_config| Ok(String::new()),
+            ),
             on_after_sending_transaction_callback,
             on_sending_delegate_action_callback: None,
             sign_as_delegate_action: false,

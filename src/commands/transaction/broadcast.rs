@@ -37,12 +37,18 @@ impl BroadcastContext {
         scope: &<Broadcast as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
     ) -> color_eyre::eyre::Result<Self> {
         let tx_hash = scope.tx_hash.to_string();
-        let tx_signer: near_primitives::types::AccountId = scope.tx_signer_account_id.clone().into();
+        let tx_signer: near_primitives::types::AccountId =
+            scope.tx_signer_account_id.clone().into();
         let unsigned_tx_arg = scope.unsigned_tx.clone();
 
         let on_after_getting_network_callback: near_cli_rs::network::OnAfterGettingNetworkCallback =
             std::sync::Arc::new(move |network_config| {
-                broadcast(network_config, &tx_hash, &tx_signer, unsigned_tx_arg.as_deref())
+                broadcast(
+                    network_config,
+                    &tx_hash,
+                    &tx_signer,
+                    unsigned_tx_arg.as_deref(),
+                )
             });
 
         Ok(Self(near_cli_rs::network::NetworkContext {
@@ -204,16 +210,11 @@ fn envelope_from_dao_proposal(
     eprintln!("Found act_proposal: proposal #{proposal_id} on {dao_account_id}");
     let proposal = crate::mpc::block_on(
         near_api::Contract(dao_account_id.clone())
-            .call_function(
-                "get_proposal",
-                serde_json::json!({ "id": proposal_id }),
-            )
+            .call_function("get_proposal", serde_json::json!({ "id": proposal_id }))
             .read_only::<serde_json::Value>()
             .fetch_from(api_network),
     )?
-    .wrap_err_with(|| {
-        format!("Failed to fetch proposal #{proposal_id} from {dao_account_id}")
-    })?;
+    .wrap_err_with(|| format!("Failed to fetch proposal #{proposal_id} from {dao_account_id}"))?;
 
     let description = proposal
         .data

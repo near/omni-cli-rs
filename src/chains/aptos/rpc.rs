@@ -81,10 +81,7 @@ pub fn submit_transaction(base_url: &str, signed_tx: &[u8]) -> color_eyre::eyre:
     let url = format!("{}/v1/transactions", base_url.trim_end_matches('/'));
     let response = reqwest::blocking::Client::new()
         .post(&url)
-        .header(
-            "Content-Type",
-            "application/x.aptos.signed_transaction+bcs",
-        )
+        .header("Content-Type", "application/x.aptos.signed_transaction+bcs")
         .body(signed_tx.to_vec())
         .send()
         .wrap_err_with(|| format!("Failed to reach Aptos REST API at {url}"))?;

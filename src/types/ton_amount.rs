@@ -43,9 +43,18 @@ mod tests {
 
     #[test]
     fn parses_and_displays() {
-        assert_eq!(TonAmount::from_str("0.5 TON").unwrap().nanotons, 500_000_000);
+        assert_eq!(
+            TonAmount::from_str("0.5 TON").unwrap().nanotons,
+            500_000_000
+        );
         assert_eq!(TonAmount::from_str("1000 nanotons").unwrap().nanotons, 1000);
         assert!(TonAmount::from_str("100").is_err());
-        assert_eq!(TonAmount { nanotons: 500_000_000 }.to_string(), "0.5 TON");
+        assert_eq!(
+            TonAmount {
+                nanotons: 500_000_000
+            }
+            .to_string(),
+            "0.5 TON"
+        );
     }
 }

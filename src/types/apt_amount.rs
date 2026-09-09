@@ -11,14 +11,19 @@ impl std::str::FromStr for AptAmount {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let octas = super::parse_move_style_amount(s, "APT", &["apt"], &["octas", "octa"], OCTAS_PER_APT)?;
+        let octas =
+            super::parse_move_style_amount(s, "APT", &["apt"], &["octas", "octa"], OCTAS_PER_APT)?;
         Ok(Self { octas })
     }
 }
 
 impl std::fmt::Display for AptAmount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", super::format_move_style_amount(self.octas, "APT", "octas", OCTAS_PER_APT))
+        write!(
+            f,
+            "{}",
+            super::format_move_style_amount(self.octas, "APT", "octas", OCTAS_PER_APT)
+        )
     }
 }
 

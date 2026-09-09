@@ -41,7 +41,9 @@ pub fn latest_blockhash(rpc_url: &str) -> color_eyre::eyre::Result<(String, u64)
         .as_str()
         .ok_or_else(|| eyre!("getLatestBlockhash returned no blockhash"))?
         .to_string();
-    let last_valid_block_height = result["value"]["lastValidBlockHeight"].as_u64().unwrap_or(0);
+    let last_valid_block_height = result["value"]["lastValidBlockHeight"]
+        .as_u64()
+        .unwrap_or(0);
     Ok((blockhash, last_valid_block_height))
 }
 

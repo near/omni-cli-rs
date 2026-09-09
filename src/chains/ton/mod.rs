@@ -44,10 +44,7 @@ fn wallet_id(chain: &ResolvedChain) -> u32 {
     v5r1_wallet_id(global_id, WORKCHAIN, 0)
 }
 
-fn wallet_address_string(
-    public_key: &[u8; 32],
-    chain: &ResolvedChain,
-) -> String {
+fn wallet_address_string(public_key: &[u8; 32], chain: &ResolvedChain) -> String {
     derive_wallet_address(WalletVersion::V5R1, WORKCHAIN, wallet_id(chain), public_key)
         // Non-bounceable form (UQ...), the standard display for wallets.
         .to_base64_string(false, chain.near_network != "mainnet")
@@ -76,10 +73,13 @@ impl ChainAdapter for TonAdapter {
         // The address depends on the network (wallet id); show the mainnet
         // form here, build() prints the network-correct one.
         let pk = crate::mpc::ed25519_bytes(public_key)?;
-        Ok(
-            derive_wallet_address(WalletVersion::V5R1, WORKCHAIN, v5r1_wallet_id(MAINNET_GLOBAL_ID, WORKCHAIN, 0), &pk)
-                .to_base64_string(false, false),
+        Ok(derive_wallet_address(
+            WalletVersion::V5R1,
+            WORKCHAIN,
+            v5r1_wallet_id(MAINNET_GLOBAL_ID, WORKCHAIN, 0),
+            &pk,
         )
+        .to_base64_string(false, false))
     }
 
     fn build(
@@ -103,10 +103,9 @@ impl ChainAdapter for TonAdapter {
             .map_err(|err| eyre!("Invalid TON address '{to}': {err}"))?;
 
         let (validity_secs, validity_note) = match latency {
-            ExecutionLatency::Immediate => (
-                IMMEDIATE_VALIDITY_SECS,
-                "expires in 10 minutes".to_string(),
-            ),
+            ExecutionLatency::Immediate => {
+                (IMMEDIATE_VALIDITY_SECS, "expires in 10 minutes".to_string())
+            }
             ExecutionLatency::Governance => (
                 GOVERNANCE_VALIDITY_SECS,
                 format!(
@@ -120,7 +119,7 @@ impl ChainAdapter for TonAdapter {
             .try_into()
             .wrap_err("valid_until overflows u32")?;
 
-        let mut message = InternalMessage::new(dest, Coins::from_nano(*nanotons as u128));
+        let mut message = InternalMessage::new(dest, Coins::from_nano(u128::from(*nanotons)));
         // Non-bounceable: funds stay with not-yet-deployed recipient wallets.
         message.bounce = false;
 
@@ -173,7 +172,7 @@ impl ChainAdapter for TonAdapter {
 
         Ok(BuiltTransaction {
             unsigned_tx: serde_json::to_value(&tx)?,
-            payloads: vec![payload.to_vec()],
+            payloads: vec![payload],
             display,
         })
     }
@@ -211,7 +210,7 @@ fn format_native(nanotons: u64, chain: &ResolvedChain) -> String {
         nanotons,
         &chain.symbol,
         "nanotons",
-        10u64.pow(chain.decimals as u32),
+        10u64.pow(u32::from(chain.decimals)),
     )
 }
 
@@ -249,7 +248,10 @@ mod tests {
         assert_eq!(payload.len(), 32);
 
         let signature = signing_key.sign(&payload);
-        signing_key.verifying_key().verify(&payload, &signature).unwrap();
+        signing_key
+            .verifying_key()
+            .verify(&payload, &signature)
+            .unwrap();
 
         let boc = tx.build_with_signature(signature.to_bytes());
         // BoC magic: b5ee9c72

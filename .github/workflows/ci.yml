@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # Pedantic mode, minus the lints that are pure noise for this codebase:
+      # - numeric-cast pedantry & too_many_lines: deliberate casts and one
+      #   long per-chain build match
+      # - doc backtick pedantry: not worth the churn
+      # - needless_pass_by_value: by-value serde_json::Value in tiny RPC
+      #   helpers is intentional
+      # - unnecessary_wraps: interactive-clap input_* helpers must return
+      #   Result<Option<T>>
+      - run: >
+          cargo clippy --all-targets --locked --
+          -D warnings
+          -W clippy::pedantic
+          -A clippy::cast-possible-truncation
+          -A clippy::cast-sign-loss
+          -A clippy::cast-precision-loss
+          -A clippy::too-many-lines
+          -A clippy::doc-markdown
+          -A clippy::doc-link-with-quotes
+          -A clippy::needless-pass-by-value
+          -A clippy::unnecessary-wraps
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked

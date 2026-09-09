@@ -244,7 +244,7 @@ fn deserialize_u128_flexible<'de, D: serde::Deserializer<'de>>(
         String(String),
     }
     match Flexible::deserialize(deserializer)? {
-        Flexible::Number(value) => Ok(value as u128),
+        Flexible::Number(value) => Ok(u128::from(value)),
         Flexible::String(value) => value.parse().map_err(serde::de::Error::custom),
     }
 }
@@ -303,11 +303,7 @@ impl ChainDef {
                 "Chain '{chain_key}' has no variant for NEAR network '{near_network}' \
                  (configured: {}). Add [chains.{chain_key}.networks.{near_network}] \
                  to the omni config.",
-                self.networks
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                self.networks.keys().cloned().collect::<Vec<_>>().join(", ")
             )
         })?;
         let (default_symbol, default_decimals) = match self.family.as_str() {
@@ -405,9 +401,9 @@ mod tests {
         assert_eq!(config.mpc.ed25519_domain_id, 1);
 
         for (key, mainnet_id, testnet_id) in [
-            ("eth", 1, 11155111),
+            ("eth", 1, 11_155_111),
             ("base", 8453, 84532),
-            ("arb", 42161, 421614),
+            ("arb", 42_161, 421_614),
             ("bnb", 56, 97),
             ("pol", 137, 80002),
             ("hyperevm", 999, 998),
@@ -424,10 +420,21 @@ mod tests {
                 Some(testnet_id)
             );
         }
-        assert_eq!(config.chains["bnb"].resolve("bnb", "mainnet").unwrap().symbol, "BNB");
+        assert_eq!(
+            config.chains["bnb"]
+                .resolve("bnb", "mainnet")
+                .unwrap()
+                .symbol,
+            "BNB"
+        );
 
-        let sol = config.chains["solana"].resolve("solana", "testnet").unwrap();
-        assert_eq!((sol.symbol.as_str(), sol.decimals, sol.chain_id), ("SOL", 9, None));
+        let sol = config.chains["solana"]
+            .resolve("solana", "testnet")
+            .unwrap();
+        assert_eq!(
+            (sol.symbol.as_str(), sol.decimals, sol.chain_id),
+            ("SOL", 9, None)
+        );
         let apt = config.chains["aptos"].resolve("aptos", "mainnet").unwrap();
         assert_eq!((apt.symbol.as_str(), apt.decimals), ("APT", 8));
         assert_eq!(
@@ -435,9 +442,15 @@ mod tests {
             "https://explorer.aptoslabs.com/txn/0xabc?network=mainnet"
         );
         let btc = config.chains["btc"].resolve("btc", "mainnet").unwrap();
-        assert_eq!((btc.family.as_str(), btc.symbol.as_str(), btc.decimals), ("utxo", "BTC", 8));
+        assert_eq!(
+            (btc.family.as_str(), btc.symbol.as_str(), btc.decimals),
+            ("utxo", "BTC", 8)
+        );
         let ton = config.chains["ton"].resolve("ton", "testnet").unwrap();
-        assert_eq!((ton.family.as_str(), ton.symbol.as_str(), ton.decimals), ("ton", "TON", 9));
+        assert_eq!(
+            (ton.family.as_str(), ton.symbol.as_str(), ton.decimals),
+            ("ton", "TON", 9)
+        );
         let sui = config.chains["sui"].resolve("sui", "testnet").unwrap();
         assert_eq!((sui.symbol.as_str(), sui.decimals), ("SUI", 9));
         assert_eq!(

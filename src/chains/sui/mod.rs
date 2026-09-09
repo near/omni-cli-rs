@@ -230,7 +230,7 @@ fn format_native(mist: u64, chain: &ResolvedChain) -> String {
         mist,
         &chain.symbol,
         "mist",
-        10u64.pow(chain.decimals as u32),
+        10u64.pow(u32::from(chain.decimals)),
     )
 }
 
@@ -289,7 +289,10 @@ mod tests {
 
         // Sui validators verify ed25519 over the digest itself
         let signature = signing_key.sign(&digest);
-        signing_key.verifying_key().verify(&digest, &signature).unwrap();
+        signing_key
+            .verifying_key()
+            .verify(&digest, &signature)
+            .unwrap();
 
         let response = MpcSignatureResponse::Ed25519 {
             signature: signature.to_bytes().to_vec(),
