@@ -44,9 +44,10 @@ The `construct` command with both execution routes, built on a family-generic
 - [x] `transaction broadcast <near-tx-hash> <tx-signer>` — finalizes an approved
       DAO proposal (envelope recovered from the proposal) or retries a failed
       direct-route broadcast (`--unsigned-tx` envelope blob)
+- [x] `account show / balance` — derived addresses across all registered
+      chains, and native balances per chain
 - [ ] Zcash (transparent) — needs an indexer choice; the builders exist
 - [ ] `proposal list / review / vote`
-- [ ] `account show / balance`
 
 ## Usage
 

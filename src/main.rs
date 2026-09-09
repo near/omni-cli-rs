@@ -35,6 +35,11 @@ struct Cmd {
 /// What are you up to? (select one of the options with the up-down arrows on your keyboard and press Enter)
 pub enum Command {
     #[strum_discriminants(strum(
+        message = "account     -   Inspect derived foreign accounts (addresses, balances)"
+    ))]
+    /// Inspect derived foreign accounts (addresses, balances)
+    Account(self::commands::account::Account),
+    #[strum_discriminants(strum(
         message = "transaction -   Construct, sign with MPC, and broadcast transactions on other chains"
     ))]
     /// Construct, sign with MPC, and broadcast transactions on other chains

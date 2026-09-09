@@ -123,3 +123,83 @@ pub fn assemble_and_broadcast(
         )),
     }
 }
+
+/// The chain-native derived address, from the MPC-derived keys of both
+/// domains (families pick the one they need).
+pub fn derived_address_for_chain(
+    chain: &ResolvedChain,
+    secp256k1_pk: &[u8; 64],
+    ed25519_pk: &[u8; 32],
+) -> color_eyre::eyre::Result<String> {
+    Ok(match chain.family.as_str() {
+        evm::FAMILY => evm::checksum(evm::address_from_derived_pk(secp256k1_pk)),
+        svm::FAMILY => omni_transaction::solana::types::SolanaAddress(*ed25519_pk).to_base58(),
+        utxo::FAMILY => utxo::address::p2wpkh_address(
+            &utxo::address::compress_public_key(secp256k1_pk),
+            utxo::address::BtcNetwork::from_near_network(&chain.near_network),
+        ),
+        aptos::FAMILY => format!(
+            "0x{}",
+            hex::encode(aptos::address_from_derived_pk(ed25519_pk))
+        ),
+        sui::FAMILY => omni_transaction::sui::utils::derive_sui_address(
+            omni_transaction::sui::types::SignatureScheme::Ed25519,
+            ed25519_pk,
+        )
+        .to_hex(),
+        ton::FAMILY => ton::wallet_address_string(ed25519_pk, chain),
+        other => {
+            return Err(color_eyre::eyre::eyre!("Unknown chain family '{other}'"));
+        }
+    })
+}
+
+/// The derived address's native balance on the chain, formatted.
+pub fn derived_balance_for_chain(
+    chain: &ResolvedChain,
+    secp256k1_pk: &[u8; 64],
+    ed25519_pk: &[u8; 32],
+) -> color_eyre::eyre::Result<String> {
+    let address = derived_address_for_chain(chain, secp256k1_pk, ed25519_pk)?;
+    let base_units: u128 = match chain.family.as_str() {
+        evm::FAMILY => {
+            evm::rpc::balance(&chain.rpc_url, evm::address_from_derived_pk(secp256k1_pk))?
+        }
+        svm::FAMILY => u128::from(svm::rpc::balance(&chain.rpc_url, &address)?),
+        utxo::FAMILY => u128::from(
+            utxo::rpc::utxos(&chain.rpc_url, &address)?
+                .iter()
+                .map(|utxo| utxo.value_sats)
+                .sum::<u64>(),
+        ),
+        aptos::FAMILY => u128::from(aptos::rpc::apt_balance(&chain.rpc_url, &address)),
+        sui::FAMILY => u128::from(
+            sui::rpc::sui_coins(&chain.rpc_url, &address)?
+                .iter()
+                .map(|coin| coin.balance)
+                .sum::<u64>(),
+        ),
+        ton::FAMILY => {
+            u128::from(ton::rpc::wallet_information(&chain.rpc_url, &address)?.balance_nanotons)
+        }
+        other => {
+            return Err(color_eyre::eyre::eyre!("Unknown chain family '{other}'"));
+        }
+    };
+    Ok(format_units(base_units, chain.decimals, &chain.symbol))
+}
+
+/// `1234500000000000000 / 18 decimals` -> `1.2345 ETH`.
+pub fn format_units(base_units: u128, decimals: u8, symbol: &str) -> String {
+    let unit = 10u128.pow(u32::from(decimals));
+    if base_units.is_multiple_of(unit) {
+        format!("{} {symbol}", base_units / unit)
+    } else {
+        format!(
+            "{}.{} {symbol}",
+            base_units / unit,
+            format!("{:0>width$}", base_units % unit, width = decimals as usize)
+                .trim_end_matches('0'),
+        )
+    }
+}

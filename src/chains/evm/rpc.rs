@@ -56,7 +56,6 @@ pub fn nonce(rpc_url: &str, address: [u8; 20]) -> color_eyre::eyre::Result<u64> 
     )?)? as u64)
 }
 
-#[allow(dead_code)] // used by the upcoming `omni account balance` command
 pub fn balance(rpc_url: &str, address: [u8; 20]) -> color_eyre::eyre::Result<u128> {
     parse_quantity(&call(
         rpc_url,

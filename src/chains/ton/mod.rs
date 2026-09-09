@@ -44,7 +44,7 @@ fn wallet_id(chain: &ResolvedChain) -> u32 {
     v5r1_wallet_id(global_id, WORKCHAIN, 0)
 }
 
-fn wallet_address_string(public_key: &[u8; 32], chain: &ResolvedChain) -> String {
+pub(crate) fn wallet_address_string(public_key: &[u8; 32], chain: &ResolvedChain) -> String {
     derive_wallet_address(WalletVersion::V5R1, WORKCHAIN, wallet_id(chain), public_key)
         // Non-bounceable form (UQ...), the standard display for wallets.
         .to_base64_string(false, chain.near_network != "mainnet")
