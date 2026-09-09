@@ -243,9 +243,11 @@ impl ChainAdapter for UtxoAdapter {
                     .to_string(),
             ),
         };
-        let rate = rpc::fee_rate(&chain.rpc_url, target_blocks)? * rate_margin;
+        let rpc = rpc::Client::new(&chain.rpc_url)?;
+        let rate = rpc.fee_rate(target_blocks)? * rate_margin;
 
-        let mut utxos = rpc::utxos(&chain.rpc_url, &sender_address)
+        let mut utxos = rpc
+            .utxos(&sender_address)
             .wrap_err_with(|| format!("Failed to fetch UTXOs for {sender_address}"))?;
         utxos.sort_by_key(|utxo| std::cmp::Reverse(utxo.value_sats));
         let total_balance: u64 = utxos.iter().map(|utxo| utxo.value_sats).sum();
@@ -433,7 +435,7 @@ pub fn assemble_and_broadcast(
     }
 
     let tx_hex = hex::encode(tx.serialize());
-    rpc::broadcast_transaction(&chain.rpc_url, &tx_hex)
+    rpc::Client::new(&chain.rpc_url)?.broadcast_transaction(&tx_hex)
 }
 
 fn format_native(sats: u64, chain: &ResolvedChain) -> String {

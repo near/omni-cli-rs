@@ -1,5 +1,6 @@
 pub mod aptos;
 pub mod evm;
+pub mod http;
 pub mod sui;
 pub mod svm;
 pub mod ton;
@@ -164,10 +165,7 @@ pub fn derived_address_for_chain(
             &utxo::address::compress_public_key(secp256k1_pk),
             utxo::address::BtcNetwork::from_near_network(&chain.near_network),
         ),
-        aptos::FAMILY => format!(
-            "0x{}",
-            hex::encode(aptos::address_from_derived_pk(ed25519_pk))
-        ),
+        aptos::FAMILY => aptos::address_from_derived_pk(ed25519_pk).to_hex(),
         sui::FAMILY => omni_transaction::sui::utils::derive_sui_address(
             omni_transaction::sui::types::SignatureScheme::Ed25519,
             ed25519_pk,
@@ -188,26 +186,29 @@ pub fn derived_balance_for_chain(
 ) -> color_eyre::eyre::Result<String> {
     let address = derived_address_for_chain(chain, secp256k1_pk, ed25519_pk)?;
     let base_units: u128 = match chain.family.as_str() {
-        evm::FAMILY => {
-            evm::rpc::balance(&chain.rpc_url, evm::address_from_derived_pk(secp256k1_pk))?
-        }
-        svm::FAMILY => u128::from(svm::rpc::balance(&chain.rpc_url, &address)?),
+        evm::FAMILY => evm::rpc::Client::new(&chain.rpc_url)?
+            .balance(evm::address_from_derived_pk(secp256k1_pk))?,
+        svm::FAMILY => u128::from(svm::rpc::Client::new(&chain.rpc_url)?.balance(&address)?),
         utxo::FAMILY => u128::from(
-            utxo::rpc::utxos(&chain.rpc_url, &address)?
+            utxo::rpc::Client::new(&chain.rpc_url)?
+                .utxos(&address)?
                 .iter()
                 .map(|utxo| utxo.value_sats)
                 .sum::<u64>(),
         ),
-        aptos::FAMILY => u128::from(aptos::rpc::apt_balance(&chain.rpc_url, &address)),
+        aptos::FAMILY => u128::from(aptos::rpc::Client::new(&chain.rpc_url)?.apt_balance(&address)),
         sui::FAMILY => u128::from(
-            sui::rpc::sui_coins(&chain.rpc_url, &address)?
+            sui::rpc::Client::new(&chain.rpc_url)?
+                .sui_coins(&address)?
                 .iter()
                 .map(|coin| coin.balance)
                 .sum::<u64>(),
         ),
-        ton::FAMILY => {
-            u128::from(ton::rpc::wallet_information(&chain.rpc_url, &address)?.balance_nanotons)
-        }
+        ton::FAMILY => u128::from(
+            ton::rpc::Client::new(&chain.rpc_url)?
+                .wallet_information(&address)?
+                .balance_nanotons,
+        ),
         other => {
             return Err(color_eyre::eyre::eyre!("Unknown chain family '{other}'"));
         }

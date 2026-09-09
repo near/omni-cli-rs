@@ -85,7 +85,7 @@ impl TransferContext {
         scope: &<Transfer as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
     ) -> color_eyre::eyre::Result<Self> {
         let spec = AptosActionSpec::Transfer {
-            to: scope.receiver.0,
+            to: omni_transaction::aptos::types::AccountAddress(scope.receiver.0),
             octas: scope.amount.octas,
         };
         Ok(Self(SpecContext {

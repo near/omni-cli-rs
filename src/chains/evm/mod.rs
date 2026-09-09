@@ -6,6 +6,7 @@ pub mod rpc;
 
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
 use omni_transaction::evm::EVMTransaction;
+use omni_transaction::evm::types::Address;
 
 use crate::chains::{BuiltTransaction, ChainAdapter, ExecutionLatency, SignatureScheme};
 use crate::config::ResolvedChain;
@@ -16,7 +17,7 @@ pub const FAMILY: &str = "evm";
 /// What the user asked for, before chain context (nonce/fees) is known.
 #[derive(Debug, Clone)]
 pub struct EvmActionSpec {
-    pub to: [u8; 20],
+    pub to: Address,
     pub value_wei: u128,
     pub data: Vec<u8>,
     /// Human-readable summary of the action for renders,
@@ -100,7 +101,7 @@ pub fn assemble_and_broadcast(
         .wrap_err("No MPC signature available to assemble")?;
     let signature = signature_from_mpc(response)?;
     let raw_tx = tx.build_with_signature(&signature);
-    rpc::send_raw_transaction(&chain.rpc_url, &raw_tx)
+    rpc::Client::new(&chain.rpc_url)?.send_raw_transaction(&raw_tx)
 }
 
 /// Reviewer-friendly JSON form of the unsigned transaction, as stored in the
@@ -195,7 +196,7 @@ pub struct EvmTxParams {
 /// refunds the unused part).
 pub fn fetch_tx_params(
     chain: &ResolvedChain,
-    from: [u8; 20],
+    from: Address,
     spec: &EvmActionSpec,
     latency: ExecutionLatency,
 ) -> color_eyre::eyre::Result<EvmTxParams> {
@@ -205,7 +206,9 @@ pub fn fetch_tx_params(
             chain.chain_key, chain.near_network
         )
     })?;
-    let actual_chain_id = rpc::chain_id(&chain.rpc_url)
+    let rpc = rpc::Client::new(&chain.rpc_url)?;
+    let actual_chain_id = rpc
+        .chain_id()
         .wrap_err_with(|| format!("Failed to query chain id from {}", chain.rpc_url))?;
     if actual_chain_id != expected_chain_id {
         return Err(eyre!(
@@ -215,9 +218,9 @@ pub fn fetch_tx_params(
         ));
     }
 
-    let nonce = rpc::nonce(&chain.rpc_url, from)?;
-    let base_estimate = rpc::gas_price(&chain.rpc_url)?;
-    let max_priority_fee_per_gas = rpc::max_priority_fee(&chain.rpc_url);
+    let nonce = rpc.nonce(from)?;
+    let base_estimate = rpc.gas_price()?;
+    let max_priority_fee_per_gas = rpc.max_priority_fee();
     let headroom_multiplier = match latency {
         ExecutionLatency::Immediate => 2,
         ExecutionLatency::Governance => 5,
@@ -229,13 +232,12 @@ pub fn fetch_tx_params(
     let gas_limit = if spec.data.is_empty() {
         // Plain native transfer to an EOA; if the target turns out to be a
         // contract, estimate_gas covers it below via the fallback.
-        match rpc::estimate_gas(&chain.rpc_url, from, spec.to, spec.value_wei, &[]) {
+        match rpc.estimate_gas(from, spec.to, spec.value_wei, &[]) {
             Ok(estimate) => estimate.saturating_mul(13) / 10,
             Err(_) => 21_000,
         }
     } else {
-        let estimate =
-            rpc::estimate_gas(&chain.rpc_url, from, spec.to, spec.value_wei, &spec.data)?;
+        let estimate = rpc.estimate_gas(from, spec.to, spec.value_wei, &spec.data)?;
         estimate.saturating_mul(13) / 10
     };
 
@@ -267,14 +269,14 @@ pub fn sighash(tx: &EVMTransaction) -> [u8; 32] {
 }
 
 /// EVM address of an MPC-derived secp256k1 key (64-byte uncompressed point).
-pub fn address_from_derived_pk(public_key: &[u8; 64]) -> [u8; 20] {
+pub fn address_from_derived_pk(public_key: &[u8; 64]) -> Address {
     let hash = alloy_primitives::keccak256(public_key);
     let mut address = [0u8; 20];
     address.copy_from_slice(&hash[12..]);
     address
 }
 
-pub fn checksum(address: [u8; 20]) -> String {
+pub fn checksum(address: Address) -> String {
     alloy_primitives::Address::from(address).to_checksum(None)
 }
 
@@ -310,7 +312,7 @@ pub fn describe(
     tx: &EVMTransaction,
     owner: &str,
     derivation_path: &str,
-    derived_address: [u8; 20],
+    derived_address: Address,
     spec: &EvmActionSpec,
 ) -> String {
     let to = tx.to.map_or_else(|| "<create>".to_string(), checksum);

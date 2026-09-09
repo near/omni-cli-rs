@@ -1,106 +1,90 @@
-//! Minimal blocking JSON-RPC client for Sui fullnodes.
+//! Blocking JSON-RPC client for Sui fullnodes, typed: requests and
+//! responses are serde structs.
 
-use color_eyre::eyre::{WrapErr, eyre};
+use serde::Deserialize;
 
-fn call(
-    rpc_url: &str,
-    method: &str,
-    params: serde_json::Value,
-) -> color_eyre::eyre::Result<serde_json::Value> {
-    let response: serde_json::Value = reqwest::blocking::Client::new()
-        .post(rpc_url)
-        .json(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params,
-        }))
-        .send()
-        .wrap_err_with(|| format!("Failed to reach Sui RPC at {rpc_url}"))?
-        .json()
-        .wrap_err_with(|| format!("Invalid JSON from Sui RPC at {rpc_url}"))?;
+use crate::chains::http::{FlexU64, JsonRpcClient, NO_PARAMS, u64_from_number_or_string};
 
-    if let Some(error) = response.get("error").filter(|e| !e.is_null()) {
-        return Err(eyre!("Sui RPC error from {method}: {error}"));
-    }
-    response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| eyre!("Sui RPC response for {method} has no result"))
-}
-
-fn parse_u64(value: &serde_json::Value) -> color_eyre::eyre::Result<u64> {
-    match value {
-        serde_json::Value::Number(n) => n
-            .as_u64()
-            .ok_or_else(|| eyre!("Expected a u64, got: {value}")),
-        serde_json::Value::String(s) => s
-            .parse()
-            .wrap_err_with(|| format!("Expected a u64 string, got: {s}")),
-        other => Err(eyre!("Expected a u64, got: {other}")),
-    }
-}
-
-pub fn reference_gas_price(rpc_url: &str) -> color_eyre::eyre::Result<u64> {
-    parse_u64(&call(
-        rpc_url,
-        "suix_getReferenceGasPrice",
-        serde_json::json!([]),
-    )?)
+pub struct Client {
+    rpc: JsonRpcClient,
 }
 
 /// A SUI gas coin owned by an address.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SuiCoin {
+    #[serde(rename = "coinObjectId")]
     pub object_id: String,
+    #[serde(deserialize_with = "u64_from_number_or_string")]
     pub version: u64,
+    #[serde(rename = "digest")]
     pub digest_base58: String,
+    #[serde(deserialize_with = "u64_from_number_or_string")]
     pub balance: u64,
 }
 
-/// SUI coins owned by `owner` (first page, up to 50 - plenty for gas
-/// selection).
-pub fn sui_coins(rpc_url: &str, owner: &str) -> color_eyre::eyre::Result<Vec<SuiCoin>> {
-    let result = call(
-        rpc_url,
-        "suix_getCoins",
-        serde_json::json!([owner, "0x2::sui::SUI", null, 50]),
-    )?;
-    let coins = result["data"]
-        .as_array()
-        .ok_or_else(|| eyre!("suix_getCoins returned no data array"))?;
-    coins
-        .iter()
-        .map(|coin| {
-            Ok(SuiCoin {
-                object_id: coin["coinObjectId"]
-                    .as_str()
-                    .ok_or_else(|| eyre!("coin has no coinObjectId"))?
-                    .to_string(),
-                version: parse_u64(&coin["version"])?,
-                digest_base58: coin["digest"]
-                    .as_str()
-                    .ok_or_else(|| eyre!("coin has no digest"))?
-                    .to_string(),
-                balance: parse_u64(&coin["balance"])?,
-            })
-        })
-        .collect()
+#[derive(Deserialize)]
+struct CoinPage {
+    data: Vec<SuiCoin>,
 }
 
-/// Broadcasts a signed transaction; returns the transaction digest.
-pub fn execute_transaction(
-    rpc_url: &str,
-    tx_bytes_base64: &str,
-    signature_base64: &str,
-) -> color_eyre::eyre::Result<String> {
-    let result = call(
-        rpc_url,
-        "sui_executeTransactionBlock",
-        serde_json::json!([tx_bytes_base64, [signature_base64]]),
-    )?;
-    result["digest"]
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| eyre!("sui_executeTransactionBlock returned no digest: {result}"))
+#[derive(Deserialize)]
+struct ExecuteResponse {
+    digest: String,
+}
+
+impl Client {
+    pub fn new(rpc_url: &str) -> color_eyre::eyre::Result<Self> {
+        Ok(Self {
+            rpc: JsonRpcClient::new(rpc_url, "Sui RPC")?,
+        })
+    }
+
+    pub fn reference_gas_price(&self) -> color_eyre::eyre::Result<u64> {
+        let FlexU64(price) = self.rpc.call("suix_getReferenceGasPrice", NO_PARAMS)?;
+        Ok(price)
+    }
+
+    /// SUI coins owned by `owner` (first page, up to 50 - plenty for gas
+    /// selection).
+    pub fn sui_coins(&self, owner: &str) -> color_eyre::eyre::Result<Vec<SuiCoin>> {
+        let page: CoinPage = self
+            .rpc
+            .call("suix_getCoins", (owner, "0x2::sui::SUI", (), 50))?;
+        Ok(page.data)
+    }
+
+    /// Broadcasts a signed transaction; returns the transaction digest.
+    pub fn execute_transaction(
+        &self,
+        tx_bytes_base64: &str,
+        signature_base64: &str,
+    ) -> color_eyre::eyre::Result<String> {
+        let response: ExecuteResponse = self.rpc.call(
+            "sui_executeTransactionBlock",
+            (tx_bytes_base64, [signature_base64]),
+        )?;
+        Ok(response.digest)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Sui encodes u64s (version, balance) as decimal strings.
+    #[test]
+    fn parses_a_coin_page() {
+        let page: CoinPage = serde_json::from_str(
+            r#"{"data":[{"coinType":"0x2::sui::SUI",
+                "coinObjectId":"0xd0c1...abc","version":"1735",
+                "digest":"8qCvNyoWJUZ9F6iK1kA9J4mDW2r5S3PqXhZbTnE7Vgud",
+                "balance":"5000000000","previousTransaction":"..."}],
+                "nextCursor":"0xd0c1...abc","hasNextPage":false}"#,
+        )
+        .unwrap();
+        assert_eq!(page.data.len(), 1);
+        assert_eq!(page.data[0].object_id, "0xd0c1...abc");
+        assert_eq!(page.data[0].version, 1735);
+        assert_eq!(page.data[0].balance, 5_000_000_000);
+    }
 }

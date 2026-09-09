@@ -1,119 +1,165 @@
-//! Minimal blocking JSON-RPC client for SVM chains (Solana, Fogo, ...).
+//! Blocking JSON-RPC client for SVM chains (Solana, Fogo, ...), typed:
+//! requests and responses are serde structs.
 
-use color_eyre::eyre::{WrapErr, eyre};
+use color_eyre::eyre::WrapErr;
+use serde::{Deserialize, Serialize};
 
-fn call(
-    rpc_url: &str,
-    method: &str,
-    params: serde_json::Value,
-) -> color_eyre::eyre::Result<serde_json::Value> {
-    let client = reqwest::blocking::Client::new();
-    let response: serde_json::Value = client
-        .post(rpc_url)
-        .json(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params,
-        }))
-        .send()
-        .wrap_err_with(|| format!("Failed to reach SVM RPC at {rpc_url}"))?
-        .json()
-        .wrap_err_with(|| format!("Invalid JSON from SVM RPC at {rpc_url}"))?;
+use crate::chains::http::JsonRpcClient;
 
-    if let Some(error) = response.get("error").filter(|e| !e.is_null()) {
-        return Err(eyre!("SVM RPC error from {method}: {error}"));
-    }
-    response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| eyre!("SVM RPC response for {method} has no result"))
+pub struct Client {
+    rpc: JsonRpcClient,
 }
 
-/// Returns the latest blockhash (base58) and its last valid block height.
-pub fn latest_blockhash(rpc_url: &str) -> color_eyre::eyre::Result<(String, u64)> {
-    let result = call(
-        rpc_url,
-        "getLatestBlockhash",
-        serde_json::json!([{ "commitment": "confirmed" }]),
-    )?;
-    let blockhash = result["value"]["blockhash"]
-        .as_str()
-        .ok_or_else(|| eyre!("getLatestBlockhash returned no blockhash"))?
-        .to_string();
-    let last_valid_block_height = result["value"]["lastValidBlockHeight"]
-        .as_u64()
-        .unwrap_or(0);
-    Ok((blockhash, last_valid_block_height))
+/// The standard SVM RPC config object passed as the last parameter.
+#[derive(Serialize)]
+struct RpcConfig {
+    commitment: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encoding: Option<&'static str>,
 }
 
-pub fn balance(rpc_url: &str, address_base58: &str) -> color_eyre::eyre::Result<u64> {
-    let result = call(
-        rpc_url,
-        "getBalance",
-        serde_json::json!([address_base58, { "commitment": "confirmed" }]),
-    )?;
-    result["value"]
-        .as_u64()
-        .ok_or_else(|| eyre!("getBalance returned a non-numeric value"))
+const CONFIRMED: RpcConfig = RpcConfig {
+    commitment: "confirmed",
+    encoding: None,
+};
+
+/// SVM RPC wraps most results in `{ context, value }`.
+#[derive(Deserialize)]
+struct WithContext<T> {
+    value: T,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestBlockhash {
+    /// Base58 blockhash.
+    pub blockhash: String,
+    #[expect(dead_code, reason = "part of the RPC response; useful in errors")]
+    pub last_valid_block_height: u64,
+}
+
+/// The `jsonParsed` layers around a durable nonce account's state.
+#[derive(Deserialize)]
+struct ParsedAccount {
+    data: ParsedAccountData,
+}
+
+#[derive(Deserialize)]
+struct ParsedAccountData {
+    parsed: ParsedNonce,
+}
+
+#[derive(Deserialize)]
+struct ParsedNonce {
+    info: NonceAccountInfo,
 }
 
 /// The state of an initialized durable nonce account.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct NonceAccountInfo {
     pub authority: String,
+    #[serde(rename = "blockhash")]
     pub durable_nonce_blockhash: String,
 }
 
-/// Fetches and parses a durable nonce account. Returns `None` if the account
-/// does not exist.
-pub fn nonce_account(
-    rpc_url: &str,
-    address_base58: &str,
-) -> color_eyre::eyre::Result<Option<NonceAccountInfo>> {
-    let result = call(
-        rpc_url,
-        "getAccountInfo",
-        serde_json::json!([address_base58, { "encoding": "jsonParsed", "commitment": "confirmed" }]),
-    )?;
-    if result["value"].is_null() {
-        return Ok(None);
+impl Client {
+    pub fn new(rpc_url: &str) -> color_eyre::eyre::Result<Self> {
+        Ok(Self {
+            rpc: JsonRpcClient::new(rpc_url, "SVM RPC")?,
+        })
     }
-    let info = &result["value"]["data"]["parsed"]["info"];
-    let authority = info["authority"]
-        .as_str()
-        .ok_or_else(|| eyre!("Account {address_base58} is not a parsed nonce account"))?
-        .to_string();
-    let durable_nonce_blockhash = info["blockhash"]
-        .as_str()
-        .ok_or_else(|| eyre!("Nonce account {address_base58} has no stored blockhash"))?
-        .to_string();
-    Ok(Some(NonceAccountInfo {
-        authority,
-        durable_nonce_blockhash,
-    }))
+
+    pub fn latest_blockhash(&self) -> color_eyre::eyre::Result<LatestBlockhash> {
+        let result: WithContext<LatestBlockhash> =
+            self.rpc.call("getLatestBlockhash", (CONFIRMED,))?;
+        Ok(result.value)
+    }
+
+    pub fn balance(&self, address_base58: &str) -> color_eyre::eyre::Result<u64> {
+        let result: WithContext<u64> = self.rpc.call("getBalance", (address_base58, CONFIRMED))?;
+        Ok(result.value)
+    }
+
+    /// Fetches and parses a durable nonce account. Returns `None` if the
+    /// account does not exist.
+    pub fn nonce_account(
+        &self,
+        address_base58: &str,
+    ) -> color_eyre::eyre::Result<Option<NonceAccountInfo>> {
+        let result: WithContext<Option<serde_json::Value>> = self.rpc.call(
+            "getAccountInfo",
+            (
+                address_base58,
+                RpcConfig {
+                    commitment: "confirmed",
+                    encoding: Some("jsonParsed"),
+                },
+            ),
+        )?;
+        let Some(account) = result.value else {
+            return Ok(None);
+        };
+        let parsed: ParsedAccount = serde_json::from_value(account).wrap_err_with(|| {
+            format!("Account {address_base58} exists but is not a parsed durable nonce account")
+        })?;
+        Ok(Some(parsed.data.parsed.info))
+    }
+
+    /// Lamports needed to make an account of `size` bytes rent-exempt.
+    pub fn minimum_rent(&self, size: u64) -> color_eyre::eyre::Result<u64> {
+        self.rpc.call("getMinimumBalanceForRentExemption", (size,))
+    }
+
+    /// Broadcasts base64-encoded wire bytes; returns the transaction
+    /// signature.
+    pub fn send_transaction(&self, tx_base64: &str) -> color_eyre::eyre::Result<String> {
+        #[derive(Serialize)]
+        struct SendConfig {
+            encoding: &'static str,
+        }
+        self.rpc.call(
+            "sendTransaction",
+            (tx_base64, SendConfig { encoding: "base64" }),
+        )
+    }
 }
 
-/// Lamports needed to make an account of `size` bytes rent-exempt.
-pub fn minimum_rent(rpc_url: &str, size: u64) -> color_eyre::eyre::Result<u64> {
-    call(
-        rpc_url,
-        "getMinimumBalanceForRentExemption",
-        serde_json::json!([size]),
-    )?
-    .as_u64()
-    .ok_or_else(|| eyre!("getMinimumBalanceForRentExemption returned a non-numeric value"))
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Broadcasts base64-encoded wire bytes; returns the transaction signature.
-pub fn send_transaction(rpc_url: &str, tx_base64: &str) -> color_eyre::eyre::Result<String> {
-    let result = call(
-        rpc_url,
-        "sendTransaction",
-        serde_json::json!([tx_base64, { "encoding": "base64" }]),
-    )?;
-    result
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| eyre!("sendTransaction returned a non-string result: {result}"))
+    /// A `jsonParsed` durable nonce account, as the RPC returns it.
+    #[test]
+    fn parses_a_json_parsed_nonce_account() {
+        let value = serde_json::json!({
+            "data": {
+                "parsed": {
+                    "info": {
+                        "authority": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+                        "blockhash": "3nvbisFbFPGjNmvS9Vf8snJXWo86SLnqDEkHfHWXpWKN",
+                        "feeCalculator": { "lamportsPerSignature": "5000" }
+                    },
+                    "type": "initialized"
+                },
+                "program": "nonce",
+                "space": 80
+            },
+            "executable": false,
+            "lamports": 1_500_000,
+            "owner": "11111111111111111111111111111111"
+        });
+        let parsed: ParsedAccount = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            parsed.data.parsed.info.authority,
+            "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
+        );
+        assert_eq!(
+            parsed.data.parsed.info.durable_nonce_blockhash,
+            "3nvbisFbFPGjNmvS9Vf8snJXWo86SLnqDEkHfHWXpWKN"
+        );
+
+        // A regular account (base64 data) is not a parsed nonce account.
+        let regular = serde_json::json!({ "data": ["aGk=", "base64"] });
+        assert!(serde_json::from_value::<ParsedAccount>(regular).is_err());
+    }
 }

@@ -85,7 +85,7 @@ impl TransferContext {
         scope: &<Transfer as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
     ) -> color_eyre::eyre::Result<Self> {
         let spec = TonActionSpec::Transfer {
-            to: scope.receiver.to_string(),
+            to: scope.receiver.0,
             nanotons: scope.amount.nanotons,
         };
         Ok(Self(SpecContext {

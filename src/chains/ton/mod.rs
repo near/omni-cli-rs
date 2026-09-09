@@ -9,7 +9,8 @@ pub mod rpc;
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
 use omni_transaction::ton::TonTransaction;
 use omni_transaction::ton::types::{
-    Coins, InternalMessage, MAINNET_GLOBAL_ID, TESTNET_GLOBAL_ID, WalletVersion, v5r1_wallet_id,
+    Coins, InternalMessage, MAINNET_GLOBAL_ID, TESTNET_GLOBAL_ID, TonAddress, WalletVersion,
+    v5r1_wallet_id,
 };
 use omni_transaction::ton::utils::derive_wallet_address;
 
@@ -27,7 +28,7 @@ const GOVERNANCE_VALIDITY_SECS: u64 = 14 * 24 * 60 * 60;
 pub enum TonActionSpec {
     /// Native TON transfer. Sent non-bounceable so not-yet-deployed
     /// recipient wallets keep the funds (standard wallet behavior).
-    Transfer { to: String, nanotons: u64 },
+    Transfer { to: TonAddress, nanotons: u64 },
 }
 
 pub struct TonAdapter {
@@ -94,13 +95,13 @@ impl ChainAdapter for TonAdapter {
         let wallet_id = wallet_id(chain);
         let wallet_address = wallet_address_string(&public_key, chain);
 
-        let info = rpc::wallet_information(&chain.rpc_url, &wallet_address)
+        let info = rpc::Client::new(&chain.rpc_url)?
+            .wallet_information(&wallet_address)
             .wrap_err_with(|| format!("Failed to fetch wallet state from {}", chain.rpc_url))?;
 
         let TonActionSpec::Transfer { to, nanotons } = &self.spec;
-        let dest: omni_transaction::ton::types::TonAddress = to
-            .parse()
-            .map_err(|err| eyre!("Invalid TON address '{to}': {err}"))?;
+        // Non-bounceable, network-correct rendering for the summary.
+        let to_display = to.to_base64_string(false, chain.near_network != "mainnet");
 
         let (validity_secs, validity_note) = match latency {
             ExecutionLatency::Immediate => {
@@ -119,7 +120,7 @@ impl ChainAdapter for TonAdapter {
             .try_into()
             .wrap_err("valid_until overflows u32")?;
 
-        let mut message = InternalMessage::new(dest, Coins::from_nano(u128::from(*nanotons)));
+        let mut message = InternalMessage::new(*to, Coins::from_nano(u128::from(*nanotons)));
         // Non-bounceable: funds stay with not-yet-deployed recipient wallets.
         message.bounce = false;
 
@@ -151,7 +152,7 @@ impl ChainAdapter for TonAdapter {
             "\n\
              Unsigned {chain_key} transaction (NEAR {near_network}):\n\
              ------------------------------------------------------------\n\
-             action:            transfer {amount} to {to}\n\
+             action:            transfer {amount} to {to_display}\n\
              wallet (from):     {wallet_address} (v5r1, derived: {owner} / \"{derivation_path}\")\n\
              balance:           {balance}{balance_note}\n\
              seqno:             {seqno}{deploy_note}\n\
@@ -212,7 +213,7 @@ pub fn assemble_and_broadcast(
         )
     })?;
     let boc = tx.build_with_signature(signature);
-    rpc::send_boc(&chain.rpc_url, &boc)
+    rpc::Client::new(&chain.rpc_url)?.send_boc(&boc)
 }
 
 fn format_native(nanotons: u64, chain: &ResolvedChain) -> String {

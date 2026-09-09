@@ -1,10 +1,32 @@
-const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
+const LAMPORTS_PER_WHOLE: u64 = 1_000_000_000;
 
-/// A native SVM amount entered as `0.5 SOL` or `5000 lamports`.
-/// The unit is required to avoid lamports/SOL footguns.
+/// The unit an SVM amount was entered in. All SVM-family native tokens
+/// (SOL, FOGO) share the 10^9 lamports scale; remembering the unit keeps
+/// the echoed console command faithful to what was typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SvmUnit {
+    #[default]
+    Sol,
+    Fogo,
+    Lamports,
+}
+
+impl SvmUnit {
+    fn symbol(self) -> &'static str {
+        match self {
+            Self::Sol => "SOL",
+            Self::Fogo => "FOGO",
+            Self::Lamports => "lamports",
+        }
+    }
+}
+
+/// A native SVM amount entered as `0.5 SOL`, `0.5 FOGO`, or `5000 lamports`.
+/// The unit is required to avoid lamports/whole-token footguns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SolAmount {
     pub lamports: u64,
+    unit: SvmUnit,
 }
 
 impl std::str::FromStr for SolAmount {
@@ -16,15 +38,18 @@ impl std::str::FromStr for SolAmount {
             Some(idx) => (s[..idx].trim(), s[idx..].trim().to_lowercase()),
             None => {
                 return Err(format!(
-                    "A unit is required (e.g. '0.5 SOL', '5000 lamports'), got: '{s}'"
+                    "A unit is required (e.g. '0.5 SOL', '0.5 FOGO', '5000 lamports'), got: '{s}'"
                 ));
             }
         };
-        let multiplier = match unit.as_str() {
-            "sol" => LAMPORTS_PER_SOL,
-            "lamports" | "lamport" => 1,
+        let (multiplier, unit) = match unit.as_str() {
+            "sol" => (LAMPORTS_PER_WHOLE, SvmUnit::Sol),
+            "fogo" => (LAMPORTS_PER_WHOLE, SvmUnit::Fogo),
+            "lamports" | "lamport" => (1, SvmUnit::Lamports),
             _ => {
-                return Err(format!("Unknown unit '{unit}' (expected SOL or lamports)"));
+                return Err(format!(
+                    "Unknown unit '{unit}' (expected SOL, FOGO, or lamports)"
+                ));
             }
         };
         let (int_part, frac_part) = match number_part.split_once('.') {
@@ -54,25 +79,27 @@ impl std::str::FromStr for SolAmount {
                 .checked_add(frac_value * (multiplier / scale))
                 .ok_or_else(|| format!("Amount out of range: '{s}'"))?;
         }
-        Ok(Self { lamports })
+        Ok(Self { lamports, unit })
     }
 }
 
 impl std::fmt::Display for SolAmount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.lamports == 0 {
-            write!(f, "0 SOL")
-        } else if self.lamports.is_multiple_of(LAMPORTS_PER_SOL) {
-            write!(f, "{} SOL", self.lamports / LAMPORTS_PER_SOL)
-        } else if self.lamports >= LAMPORTS_PER_SOL / 1_000 {
-            write!(
-                f,
-                "{}.{} SOL",
-                self.lamports / LAMPORTS_PER_SOL,
-                format!("{:0>9}", self.lamports % LAMPORTS_PER_SOL).trim_end_matches('0')
-            )
-        } else {
-            write!(f, "{} lamports", self.lamports)
+        match self.unit {
+            SvmUnit::Lamports => write!(f, "{} lamports", self.lamports),
+            whole => {
+                let symbol = whole.symbol();
+                if self.lamports.is_multiple_of(LAMPORTS_PER_WHOLE) {
+                    write!(f, "{} {symbol}", self.lamports / LAMPORTS_PER_WHOLE)
+                } else {
+                    write!(
+                        f,
+                        "{}.{} {symbol}",
+                        self.lamports / LAMPORTS_PER_WHOLE,
+                        format!("{:0>9}", self.lamports % LAMPORTS_PER_WHOLE).trim_end_matches('0')
+                    )
+                }
+            }
         }
     }
 }
@@ -92,31 +119,27 @@ mod tests {
             SolAmount::from_str("0.5 SOL").unwrap().lamports,
             500_000_000
         );
+        assert_eq!(
+            SolAmount::from_str("0.5 FOGO").unwrap().lamports,
+            500_000_000
+        );
         assert_eq!(SolAmount::from_str("5000 lamports").unwrap().lamports, 5000);
         assert_eq!(
             SolAmount::from_str("1 sol").unwrap().lamports,
-            LAMPORTS_PER_SOL
+            LAMPORTS_PER_WHOLE
         );
         assert!(SolAmount::from_str("100").is_err());
         assert!(SolAmount::from_str("0.5 lamports").is_err());
-        assert_eq!(
-            SolAmount {
-                lamports: 500_000_000
-            }
-            .to_string(),
-            "0.5 SOL"
-        );
-        assert_eq!(
-            SolAmount::from_str(
-                &SolAmount {
-                    lamports: 123_456_789
-                }
-                .to_string()
-            )
-            .unwrap(),
-            SolAmount {
-                lamports: 123_456_789
-            }
-        );
+        assert!(SolAmount::from_str("1 BTC").is_err());
+    }
+
+    /// The echoed console command must reproduce the unit that was typed.
+    #[test]
+    fn display_round_trips_the_entered_unit() {
+        for input in ["0.5 SOL", "0.5 FOGO", "123456789 lamports", "2 FOGO"] {
+            let parsed = SolAmount::from_str(input).unwrap();
+            assert_eq!(parsed.to_string(), input);
+            assert_eq!(SolAmount::from_str(&parsed.to_string()).unwrap(), parsed);
+        }
     }
 }

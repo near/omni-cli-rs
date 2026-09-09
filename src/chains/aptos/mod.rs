@@ -30,7 +30,7 @@ const GOVERNANCE_EXPIRATION_SECS: u64 = 14 * 24 * 60 * 60;
 pub enum AptosActionSpec {
     /// APT transfer via `0x1::aptos_account::transfer` (creates the recipient
     /// account if needed).
-    Transfer { to: [u8; 32], octas: u64 },
+    Transfer { to: AccountAddress, octas: u64 },
 }
 
 /// What goes into the envelope: the raw transaction plus the sender's public
@@ -47,15 +47,11 @@ pub struct AptosAdapter {
 
 /// Aptos authentication key / account address of an ed25519 public key:
 /// `sha3_256(public_key || 0x00)`.
-pub fn address_from_derived_pk(public_key: &[u8; 32]) -> [u8; 32] {
+pub fn address_from_derived_pk(public_key: &[u8; 32]) -> AccountAddress {
     let mut hasher = Sha3_256::new();
     hasher.update(public_key);
     hasher.update([ED25519_SCHEME]);
-    hasher.finalize().into()
-}
-
-fn address_hex(address: [u8; 32]) -> String {
-    format!("0x{}", hex::encode(address))
+    AccountAddress(hasher.finalize().into())
 }
 
 impl ChainAdapter for AptosAdapter {
@@ -72,7 +68,7 @@ impl ChainAdapter for AptosAdapter {
         public_key: &near_crypto::PublicKey,
     ) -> color_eyre::eyre::Result<String> {
         let pk = crate::mpc::ed25519_bytes(public_key)?;
-        Ok(address_hex(address_from_derived_pk(&pk)))
+        Ok(address_from_derived_pk(&pk).to_hex())
     }
 
     fn build(
@@ -85,13 +81,17 @@ impl ChainAdapter for AptosAdapter {
     ) -> color_eyre::eyre::Result<BuiltTransaction> {
         let pk = crate::mpc::ed25519_bytes(derived_public_key)?;
         let sender = address_from_derived_pk(&pk);
-        let sender_hex = address_hex(sender);
+        let sender_hex = sender.to_hex();
 
-        let (chain_id, ledger_time_secs) = rpc::ledger_info(&chain.rpc_url)
+        let rpc = rpc::Client::new(&chain.rpc_url)?;
+        let ledger_info = rpc
+            .ledger_info()
             .wrap_err_with(|| format!("Failed to fetch ledger info from {}", chain.rpc_url))?;
-        let sequence_number = rpc::sequence_number(&chain.rpc_url, &sender_hex)?;
-        let (gas_price, prioritized_gas_price) = rpc::estimate_gas_price(&chain.rpc_url)?;
-        let balance = rpc::apt_balance(&chain.rpc_url, &sender_hex);
+        let (chain_id, ledger_time_secs) = (ledger_info.chain_id, ledger_info.timestamp_secs());
+        let sequence_number = rpc.sequence_number(&sender_hex)?;
+        let gas_prices = rpc.estimate_gas_price()?;
+        let (gas_price, prioritized_gas_price) = (gas_prices.regular, gas_prices.prioritized());
+        let balance = rpc.apt_balance(&sender_hex);
 
         let (gas_unit_price, expiration_offset_secs, validity_note) = match latency {
             ExecutionLatency::Immediate => (
@@ -121,20 +121,19 @@ impl ChainAdapter for AptosAdapter {
                     Identifier::new("transfer")
                         .map_err(|err| eyre!("Invalid identifier: {err:?}"))?,
                     vec![],
-                    vec![to.to_vec(), octas.to_le_bytes().to_vec()],
+                    vec![to.0.to_vec(), octas.to_le_bytes().to_vec()],
                 )),
                 format!(
                     "transfer {} to {}",
                     format_native(*octas, chain),
-                    address_hex(*to)
+                    to.to_hex()
                 ),
                 octas + MAX_GAS_AMOUNT * gas_unit_price,
             ),
         };
 
         let tx = AptosTransaction {
-            sender: AccountAddress::from_hex(&sender_hex)
-                .map_err(|err| eyre!("Invalid sender address: {err:?}"))?,
+            sender,
             sequence_number,
             payload,
             max_gas_amount: MAX_GAS_AMOUNT,
@@ -219,7 +218,7 @@ pub fn assemble_and_broadcast(
     let public_key = Ed25519PublicKey::from_hex(&payload.sender_public_key)
         .map_err(|err| eyre!("Invalid sender public key in the envelope: {err:?}"))?;
     let signed_tx = payload.tx.build_with_signature(&public_key, &signature);
-    rpc::submit_transaction(&chain.rpc_url, &signed_tx)
+    rpc::Client::new(&chain.rpc_url)?.submit_transaction(&signed_tx)
 }
 
 /// Envelope prettification: entry-function args are BCS byte blobs that the
@@ -291,7 +290,7 @@ mod tests {
         let sender = address_from_derived_pk(&pk);
 
         let tx = AptosTransaction {
-            sender: AccountAddress::from_hex(&hex::encode(sender)).unwrap(),
+            sender,
             sequence_number: 7,
             payload: TransactionPayload::EntryFunction(EntryFunction::new(
                 ModuleId::new(

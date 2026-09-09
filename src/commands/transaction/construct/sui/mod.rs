@@ -83,7 +83,7 @@ impl TransferContext {
         scope: &<Transfer as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
     ) -> color_eyre::eyre::Result<Self> {
         let spec = SuiActionSpec::Transfer {
-            to: scope.receiver.0,
+            to: omni_transaction::sui::types::SuiAddress(scope.receiver.0),
             mist: scope.amount.mist,
         };
         Ok(Self(SpecContext {

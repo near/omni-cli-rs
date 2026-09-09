@@ -49,7 +49,7 @@ fn rent_sysvar() -> SolanaAddress {
 #[derive(Debug, Clone)]
 pub enum SvmActionSpec {
     /// Native SOL transfer via the system program.
-    Transfer { to: String, lamports: u64 },
+    Transfer { to: SolanaAddress, lamports: u64 },
     /// Create + initialize the derived address's durable nonce account -
     /// the one-time prerequisite for the DAO route on SVM chains.
     SetupNonce,
@@ -59,7 +59,7 @@ pub struct SvmAdapter {
     pub spec: SvmActionSpec,
     /// Externally created nonce account (authority must be the derived
     /// address). When absent, the deterministic seed account is used.
-    pub nonce_account_override: Option<String>,
+    pub nonce_account_override: Option<SolanaAddress>,
 }
 
 /// The deterministic durable nonce account of a derived address:
@@ -189,6 +189,7 @@ impl ChainAdapter for SvmAdapter {
         let payer = SolanaAddress(crate::mpc::ed25519_bytes(derived_public_key)?);
         let payer_base58 = payer.to_base58();
         let nonce_account = nonce_account_address(payer);
+        let rpc = rpc::Client::new(&chain.rpc_url)?;
 
         // Resolve blockhash + instruction prefix per action and latency.
         let (instructions, blockhash_base58, validity_note, summary, required) =
@@ -200,15 +201,15 @@ impl ChainAdapter for SvmAdapter {
                     ));
                 }
                 (SvmActionSpec::SetupNonce, ExecutionLatency::Immediate) => {
-                    if rpc::nonce_account(&chain.rpc_url, &nonce_account.to_base58())?.is_some() {
+                    if rpc.nonce_account(&nonce_account.to_base58())?.is_some() {
                         return Err(eyre!(
                             "The durable nonce account {} for {payer_base58} already exists - \
                              the DAO route is ready to use.",
                             nonce_account.to_base58()
                         ));
                     }
-                    let rent = rpc::minimum_rent(&chain.rpc_url, NONCE_ACCOUNT_SIZE)?;
-                    let (recent, _) = rpc::latest_blockhash(&chain.rpc_url)?;
+                    let rent = rpc.minimum_rent(NONCE_ACCOUNT_SIZE)?;
+                    let recent = rpc.latest_blockhash()?.blockhash;
                     (
                         vec![
                             create_account_with_seed(
@@ -233,12 +234,12 @@ impl ChainAdapter for SvmAdapter {
                     )
                 }
                 (SvmActionSpec::Transfer { to, lamports }, ExecutionLatency::Immediate) => {
-                    let to_address = SolanaAddress::from_base58(to)
-                        .map_err(|err| eyre!("Invalid Solana address '{to}': {err}"))?;
-                    let (recent, _) = rpc::latest_blockhash(&chain.rpc_url)
-                        .wrap_err("Failed to fetch a recent blockhash")?;
+                    let recent = rpc
+                        .latest_blockhash()
+                        .wrap_err("Failed to fetch a recent blockhash")?
+                        .blockhash;
                     (
-                        vec![utils::system_transfer(payer, to_address, *lamports)],
+                        vec![utils::system_transfer(payer, *to, *lamports)],
                         recent,
                         "expires in ~60-90 seconds (recent blockhash)".to_string(),
                         format!("transfer {} to {to}", format_native(*lamports, chain)),
@@ -246,18 +247,12 @@ impl ChainAdapter for SvmAdapter {
                     )
                 }
                 (SvmActionSpec::Transfer { to, lamports }, ExecutionLatency::Governance) => {
-                    let to_address = SolanaAddress::from_base58(to)
-                        .map_err(|err| eyre!("Invalid Solana address '{to}': {err}"))?;
-                    let nonce_account = match &self.nonce_account_override {
-                        Some(address) => SolanaAddress::from_base58(address)
-                            .map_err(|err| eyre!("Invalid --nonce-account '{address}': {err}"))?,
-                        None => nonce_account,
-                    };
-                    let nonce_info =
-                        rpc::nonce_account(&chain.rpc_url, &nonce_account.to_base58())?
-                            .wrap_err_with(|| {
-                                format!(
-                                    "The DAO route on SVM needs a durable nonce account with \
+                    let nonce_account = self.nonce_account_override.unwrap_or(nonce_account);
+                    let nonce_info = rpc
+                        .nonce_account(&nonce_account.to_base58())?
+                        .wrap_err_with(|| {
+                            format!(
+                                "The DAO route on SVM needs a durable nonce account with \
                              authority {payer_base58}, and none was found at {}.\n\
                              - For an account-owned derived address, create the \
                              deterministic one (signed by the derived key itself):\n  \
@@ -269,10 +264,10 @@ impl ChainAdapter for SvmAdapter {
                              solana create-nonce-account <new-keypair.json> 0.0015 \
                              --nonce-authority {payer_base58}\n  \
                              ... then pass it via --nonce-account <address>.",
-                                    nonce_account.to_base58(),
-                                    chain.chain_key,
-                                )
-                            })?;
+                                nonce_account.to_base58(),
+                                chain.chain_key,
+                            )
+                        })?;
                     if nonce_info.authority != payer_base58 {
                         return Err(eyre!(
                             "The nonce account {} has authority {}, not the derived \
@@ -284,7 +279,7 @@ impl ChainAdapter for SvmAdapter {
                     (
                         vec![
                             advance_nonce_account(nonce_account, payer),
-                            utils::system_transfer(payer, to_address, *lamports),
+                            utils::system_transfer(payer, *to, *lamports),
                         ],
                         nonce_info.durable_nonce_blockhash,
                         format!(
@@ -309,7 +304,7 @@ impl ChainAdapter for SvmAdapter {
 
         let payload = tx.build_for_signing();
 
-        let balance = rpc::balance(&chain.rpc_url, &payer_base58).unwrap_or(0);
+        let balance = rpc.balance(&payer_base58).unwrap_or(0);
         let balance_note = if balance < required {
             format!(
                 "\n   WARNING: balance {} is below the required {} (amount + fee/rent) - \
@@ -383,7 +378,7 @@ pub fn assemble_and_broadcast(
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(&wire_bytes)
     };
-    rpc::send_transaction(&chain.rpc_url, &tx_base64)
+    rpc::Client::new(&chain.rpc_url)?.send_transaction(&tx_base64)
 }
 
 /// Envelope prettification: instruction data blobs are emitted as number
@@ -493,7 +488,7 @@ mod tests {
         // Adapter address derivation matches the payer
         let adapter = SvmAdapter {
             spec: SvmActionSpec::Transfer {
-                to: to.to_base58(),
+                to,
                 lamports: 1_000_000,
             },
             nonce_account_override: None,

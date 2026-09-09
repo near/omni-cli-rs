@@ -208,16 +208,13 @@ fn envelope_from_dao_proposal(
         )?;
 
     eprintln!("Found act_proposal: proposal #{proposal_id} on {dao_account_id}");
-    let proposal = crate::mpc::block_on(
-        near_api::Contract(dao_account_id.clone())
-            .call_function("get_proposal", serde_json::json!({ "id": proposal_id }))
-            .read_only::<serde_json::Value>()
-            .fetch_from(api_network),
-    )?
-    .wrap_err_with(|| format!("Failed to fetch proposal #{proposal_id} from {dao_account_id}"))?;
+    let dao: near_primitives::types::AccountId = dao_account_id
+        .as_str()
+        .parse()
+        .wrap_err("Invalid DAO account id")?;
+    let proposal = crate::dao::fetch_proposal(api_network, &dao, proposal_id)?;
 
     let description = proposal
-        .data
         .get("description")
         .and_then(|description| description.as_str())
         .wrap_err("The proposal has no description")?;

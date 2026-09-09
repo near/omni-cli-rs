@@ -1,102 +1,160 @@
-//! Minimal blocking client for the Aptos fullnode REST API.
+//! Blocking client for the Aptos fullnode REST API, typed: responses are
+//! serde structs (Aptos encodes most u64s as decimal strings).
 
 use color_eyre::eyre::{WrapErr, eyre};
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
-fn get(base_url: &str, path: &str) -> color_eyre::eyre::Result<serde_json::Value> {
-    let url = format!("{}/v1{path}", base_url.trim_end_matches('/'));
-    let response = reqwest::blocking::Client::new()
-        .get(&url)
-        .send()
-        .wrap_err_with(|| format!("Failed to reach Aptos REST API at {url}"))?;
-    let status = response.status();
-    let body: serde_json::Value = response
-        .json()
-        .wrap_err_with(|| format!("Invalid JSON from Aptos REST API at {url}"))?;
-    if !status.is_success() {
-        return Err(eyre!(
-            "Aptos REST API error ({status}) from {path}: {}",
-            body["message"].as_str().unwrap_or("unknown error")
-        ));
-    }
-    Ok(body)
+use crate::chains::http::{FlexU64, RestClient, u64_from_number_or_string};
+
+pub struct Client {
+    rest: RestClient,
 }
 
-fn parse_u64(value: &serde_json::Value) -> color_eyre::eyre::Result<u64> {
-    match value {
-        serde_json::Value::Number(n) => n
-            .as_u64()
-            .ok_or_else(|| eyre!("Expected a u64, got: {value}")),
-        serde_json::Value::String(s) => s
-            .parse()
-            .wrap_err_with(|| format!("Expected a u64 string, got: {s}")),
-        other => Err(eyre!("Expected a u64, got: {other}")),
+/// Chain id and current ledger timestamp.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LedgerInfo {
+    pub chain_id: u8,
+    #[serde(
+        rename = "ledger_timestamp",
+        deserialize_with = "u64_from_number_or_string"
+    )]
+    timestamp_micros: u64,
+}
+
+impl LedgerInfo {
+    pub fn timestamp_secs(&self) -> u64 {
+        self.timestamp_micros / 1_000_000
     }
 }
 
-/// Chain id and current ledger timestamp (unix seconds).
-pub fn ledger_info(base_url: &str) -> color_eyre::eyre::Result<(u8, u64)> {
-    let info = get(base_url, "")?;
-    let chain_id = info["chain_id"]
-        .as_u64()
-        .ok_or_else(|| eyre!("Aptos ledger info has no chain_id"))? as u8;
-    let timestamp_secs = parse_u64(&info["ledger_timestamp"])? / 1_000_000;
-    Ok((chain_id, timestamp_secs))
+#[derive(Deserialize)]
+struct AccountInfo {
+    #[serde(deserialize_with = "u64_from_number_or_string")]
+    sequence_number: u64,
 }
 
-pub fn sequence_number(base_url: &str, address_hex: &str) -> color_eyre::eyre::Result<u64> {
-    let account = get(base_url, &format!("/accounts/{address_hex}")).map_err(|err| {
-        eyre!(
-            "{err}\n(An Aptos account is created by receiving coins - if the derived \
-             account does not exist yet, fund the derived address first.)"
+/// Gas unit price estimates, in octas.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GasPrices {
+    #[serde(rename = "gas_estimate")]
+    pub regular: u64,
+    #[serde(rename = "prioritized_gas_estimate")]
+    prioritized: Option<u64>,
+}
+
+impl GasPrices {
+    pub fn prioritized(&self) -> u64 {
+        self.prioritized.unwrap_or(self.regular * 2)
+    }
+}
+
+#[derive(Deserialize)]
+struct SubmitResponse {
+    hash: String,
+}
+
+#[derive(Deserialize)]
+struct ErrorResponse {
+    message: String,
+}
+
+fn error_message(body: &str) -> String {
+    serde_json::from_str::<ErrorResponse>(body)
+        .map_or_else(|_| body.to_string(), |error| error.message)
+}
+
+impl Client {
+    pub fn new(base_url: &str) -> color_eyre::eyre::Result<Self> {
+        Ok(Self {
+            rest: RestClient::new(base_url, "Aptos REST API")?,
+        })
+    }
+
+    fn get<T: DeserializeOwned>(&self, path: &str) -> color_eyre::eyre::Result<T> {
+        let (status, body) = self.rest.send(self.rest.get(&format!("/v1{path}")))?;
+        if !status.is_success() {
+            return Err(eyre!(
+                "Aptos REST API error ({status}) from {path}: {}",
+                error_message(&body)
+            ));
+        }
+        serde_json::from_str(&body)
+            .wrap_err_with(|| format!("Unexpected Aptos REST API response from {path}: {body}"))
+    }
+
+    pub fn ledger_info(&self) -> color_eyre::eyre::Result<LedgerInfo> {
+        self.get("")
+    }
+
+    pub fn sequence_number(&self, address_hex: &str) -> color_eyre::eyre::Result<u64> {
+        let account: AccountInfo =
+            self.get(&format!("/accounts/{address_hex}"))
+                .map_err(|err| {
+                    eyre!(
+                        "{err}\n(An Aptos account is created by receiving coins - if the derived \
+                     account does not exist yet, fund the derived address first.)"
+                    )
+                })?;
+        Ok(account.sequence_number)
+    }
+
+    pub fn estimate_gas_price(&self) -> color_eyre::eyre::Result<GasPrices> {
+        self.get("/estimate_gas_price")
+    }
+
+    /// Best-effort APT balance in octas (0 if the endpoint is unavailable).
+    pub fn apt_balance(&self, address_hex: &str) -> u64 {
+        self.get::<FlexU64>(&format!(
+            "/accounts/{address_hex}/balance/0x1::aptos_coin::AptosCoin"
+        ))
+        .map_or(0, |FlexU64(balance)| balance)
+    }
+
+    /// Broadcasts BCS `SignedTransaction` bytes; returns the transaction
+    /// hash.
+    pub fn submit_transaction(&self, signed_tx: &[u8]) -> color_eyre::eyre::Result<String> {
+        let request = self
+            .rest
+            .post("/v1/transactions")
+            .header("Content-Type", "application/x.aptos.signed_transaction+bcs")
+            .body(signed_tx.to_vec());
+        let (status, body) = self.rest.send(request)?;
+        if !status.is_success() {
+            return Err(eyre!(
+                "Aptos rejected the transaction ({status}): {}",
+                error_message(&body)
+            ));
+        }
+        let response: SubmitResponse = serde_json::from_str(&body)
+            .wrap_err_with(|| format!("Aptos submit response has no hash: {body}"))?;
+        Ok(response.hash)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Aptos encodes most u64s as decimal strings.
+    #[test]
+    fn parses_ledger_info_and_gas_estimates() {
+        let info: LedgerInfo = serde_json::from_str(
+            r#"{"chain_id":2,"epoch":"1234","ledger_version":"999",
+                "ledger_timestamp":"1757400000123456","node_role":"full_node"}"#,
         )
-    })?;
-    parse_u64(&account["sequence_number"])
-}
+        .unwrap();
+        assert_eq!(info.chain_id, 2);
+        assert_eq!(info.timestamp_secs(), 1_757_400_000);
 
-/// (regular, prioritized) gas unit price estimates, in octas.
-pub fn estimate_gas_price(base_url: &str) -> color_eyre::eyre::Result<(u64, u64)> {
-    let estimate = get(base_url, "/estimate_gas_price")?;
-    let regular = parse_u64(&estimate["gas_estimate"])?;
-    let prioritized = estimate
-        .get("prioritized_gas_estimate")
-        .map(parse_u64)
-        .transpose()?
-        .unwrap_or(regular * 2);
-    Ok((regular, prioritized))
-}
+        let with_priority: GasPrices = serde_json::from_str(
+            r#"{"deprioritized_gas_estimate":100,"gas_estimate":100,"prioritized_gas_estimate":150}"#,
+        )
+        .unwrap();
+        assert_eq!(with_priority.regular, 100);
+        assert_eq!(with_priority.prioritized(), 150);
 
-/// Best-effort APT balance in octas (0 if the endpoint is unavailable).
-pub fn apt_balance(base_url: &str, address_hex: &str) -> u64 {
-    get(
-        base_url,
-        &format!("/accounts/{address_hex}/balance/0x1::aptos_coin::AptosCoin"),
-    )
-    .ok()
-    .and_then(|value| parse_u64(&value).ok())
-    .unwrap_or(0)
-}
-
-/// Broadcasts BCS `SignedTransaction` bytes; returns the transaction hash.
-pub fn submit_transaction(base_url: &str, signed_tx: &[u8]) -> color_eyre::eyre::Result<String> {
-    let url = format!("{}/v1/transactions", base_url.trim_end_matches('/'));
-    let response = reqwest::blocking::Client::new()
-        .post(&url)
-        .header("Content-Type", "application/x.aptos.signed_transaction+bcs")
-        .body(signed_tx.to_vec())
-        .send()
-        .wrap_err_with(|| format!("Failed to reach Aptos REST API at {url}"))?;
-    let status = response.status();
-    let body: serde_json::Value = response
-        .json()
-        .wrap_err("Invalid JSON from the Aptos submit endpoint")?;
-    if !status.is_success() {
-        return Err(eyre!(
-            "Aptos rejected the transaction ({status}): {}",
-            body["message"].as_str().unwrap_or("unknown error")
-        ));
+        let without_priority: GasPrices = serde_json::from_str(r#"{"gas_estimate":100}"#).unwrap();
+        assert_eq!(without_priority.prioritized(), 200);
     }
-    body["hash"]
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| eyre!("Aptos submit response has no hash: {body}"))
 }

@@ -327,10 +327,10 @@ never sign a payload reviewers mistake for mainnet:
 [chains.base]
 family = "evm"
 [chains.base.networks.mainnet]
-rpc_url = "https://mainnet.base.org"
+rpc_url = "https://base-rpc.publicnode.com"
 chain_id = 8453
 [chains.base.networks.testnet]
-rpc_url = "https://sepolia.base.org"
+rpc_url = "https://base-sepolia-rpc.publicnode.com"
 chain_id = 84532
 ```
 

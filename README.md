@@ -24,8 +24,9 @@ The `construct` command with both execution routes, built on a family-generic
 
 - [x] `construct evm <chain>` — `transfer` / `contract-call` / `raw`
       (secp256k1, domain 0; defaults: eth, base, arb, bnb, pol, hyperevm, abs)
-- [x] `construct svm <chain>` — `transfer` + `setup-nonce` (Solana/Fogo;
-      ed25519, domain 1). The DAO route uses a durable nonce account: create
+- [x] `construct svm <chain>` — `transfer` + `setup-nonce` (ed25519,
+      domain 1; defaults: solana, fogo). The DAO route uses a durable nonce
+      account: create
       the deterministic one with `setup-nonce` (account-owned paths) or pass
       an externally created one via `--nonce-account` (DAO-owned paths)
 - [x] `construct aptos <chain>` — `transfer` (ed25519; DAO route supported —
@@ -100,11 +101,11 @@ testnet → its testnet):
 [chains.base]
 family = "evm"
 [chains.base.networks.mainnet]
-rpc_url = "https://mainnet.base.org"
+rpc_url = "https://base-rpc.publicnode.com"
 chain_id = 8453
 explorer_tx_url = "https://basescan.org/tx/"
 [chains.base.networks.testnet]
-rpc_url = "https://sepolia.base.org"
+rpc_url = "https://base-sepolia-rpc.publicnode.com"
 chain_id = 84532
 explorer_tx_url = "https://sepolia.basescan.org/tx/"
 ```

@@ -1,109 +1,124 @@
-//! Minimal blocking JSON-RPC client for EVM chains. Intentionally thin
-//! (plain reqwest) - omni-cli keeps heavy chain SDKs out of the dependency
-//! tree, matching omni-transaction-rs's own philosophy.
+//! Blocking JSON-RPC client for EVM chains. Intentionally thin (plain
+//! reqwest, no heavy chain SDK - matching omni-transaction-rs's own
+//! philosophy), but typed: requests and responses are serde structs.
 
-use color_eyre::eyre::{WrapErr, eyre};
+use color_eyre::eyre::WrapErr;
+use omni_transaction::evm::types::Address;
+use serde::{Deserialize, Serialize};
 
-fn call(
-    rpc_url: &str,
-    method: &str,
-    params: serde_json::Value,
-) -> color_eyre::eyre::Result<serde_json::Value> {
-    let client = reqwest::blocking::Client::new();
-    let response: serde_json::Value = client
-        .post(rpc_url)
-        .json(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params,
-        }))
-        .send()
-        .wrap_err_with(|| format!("Failed to reach EVM RPC at {rpc_url}"))?
-        .json()
-        .wrap_err_with(|| format!("Invalid JSON from EVM RPC at {rpc_url}"))?;
+use crate::chains::http::{JsonRpcClient, NO_PARAMS};
 
-    if let Some(error) = response.get("error").filter(|e| !e.is_null()) {
-        return Err(eyre!("EVM RPC error from {method}: {error}"));
+pub struct Client {
+    rpc: JsonRpcClient,
+}
+
+/// An EVM JSON-RPC quantity: a `0x`-prefixed hex string.
+#[derive(Debug, Clone, Copy)]
+struct Quantity(u128);
+
+impl<'de> Deserialize<'de> for Quantity {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        let hex_str = value.strip_prefix("0x").unwrap_or(&value);
+        u128::from_str_radix(hex_str, 16)
+            .map(Quantity)
+            .map_err(|_| serde::de::Error::custom(format!("invalid hex quantity: '{value}'")))
     }
-    response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| eyre!("EVM RPC response for {method} has no result"))
 }
 
-fn parse_quantity(value: &serde_json::Value) -> color_eyre::eyre::Result<u128> {
-    let s = value
-        .as_str()
-        .ok_or_else(|| eyre!("Expected a hex quantity string, got: {value}"))?;
-    let hex_str = s.strip_prefix("0x").unwrap_or(s);
-    u128::from_str_radix(hex_str, 16).wrap_err_with(|| format!("Invalid hex quantity: {s}"))
+fn quantity(value: u128) -> String {
+    format!("0x{value:x}")
 }
 
-fn address_hex(address: [u8; 20]) -> String {
+fn address(address: Address) -> String {
     format!("0x{}", hex::encode(address))
 }
 
-pub fn chain_id(rpc_url: &str) -> color_eyre::eyre::Result<u64> {
-    Ok(parse_quantity(&call(rpc_url, "eth_chainId", serde_json::json!([]))?)? as u64)
+/// `Address` is a bare `[u8; 20]` alias in omni-transaction, so a derived
+/// serde impl would emit a number array; the wire wants `0x...` hex.
+fn serialize_address<S: serde::Serializer>(
+    address: &Address,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&self::address(*address))
 }
 
-pub fn nonce(rpc_url: &str, address: [u8; 20]) -> color_eyre::eyre::Result<u64> {
-    Ok(parse_quantity(&call(
-        rpc_url,
-        "eth_getTransactionCount",
-        serde_json::json!([address_hex(address), "pending"]),
-    )?)? as u64)
+fn bytes(data: &[u8]) -> String {
+    format!("0x{}", hex::encode(data))
 }
 
-pub fn balance(rpc_url: &str, address: [u8; 20]) -> color_eyre::eyre::Result<u128> {
-    parse_quantity(&call(
-        rpc_url,
-        "eth_getBalance",
-        serde_json::json!([address_hex(address), "latest"]),
-    )?)
+/// The transaction object of `eth_estimateGas`.
+#[derive(Serialize)]
+struct CallRequest {
+    #[serde(serialize_with = "serialize_address")]
+    from: Address,
+    #[serde(serialize_with = "serialize_address")]
+    to: Address,
+    value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
 }
 
-pub fn gas_price(rpc_url: &str) -> color_eyre::eyre::Result<u128> {
-    parse_quantity(&call(rpc_url, "eth_gasPrice", serde_json::json!([]))?)
-}
-
-pub fn max_priority_fee(rpc_url: &str) -> u128 {
-    const DEFAULT_TIP: u128 = 1_500_000_000; // 1.5 gwei
-    call(rpc_url, "eth_maxPriorityFeePerGas", serde_json::json!([]))
-        .and_then(|v| parse_quantity(&v))
-        .unwrap_or(DEFAULT_TIP)
-}
-
-pub fn estimate_gas(
-    rpc_url: &str,
-    from: [u8; 20],
-    to: [u8; 20],
-    value_wei: u128,
-    data: &[u8],
-) -> color_eyre::eyre::Result<u128> {
-    let mut tx = serde_json::json!({
-        "from": address_hex(from),
-        "to": address_hex(to),
-        "value": format!("0x{value_wei:x}"),
-    });
-    if !data.is_empty() {
-        tx["data"] = serde_json::Value::String(format!("0x{}", hex::encode(data)));
+impl Client {
+    pub fn new(rpc_url: &str) -> color_eyre::eyre::Result<Self> {
+        Ok(Self {
+            rpc: JsonRpcClient::new(rpc_url, "EVM RPC")?,
+        })
     }
-    parse_quantity(&call(rpc_url, "eth_estimateGas", serde_json::json!([tx]))?).wrap_err(
-        "Gas estimation failed - the transaction would likely revert as constructed \
-         (check the target address, calldata, and the derived account's balance)",
-    )
-}
 
-pub fn send_raw_transaction(rpc_url: &str, raw_tx: &[u8]) -> color_eyre::eyre::Result<String> {
-    let result = call(
-        rpc_url,
-        "eth_sendRawTransaction",
-        serde_json::json!([format!("0x{}", hex::encode(raw_tx))]),
-    )?;
-    result
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| eyre!("eth_sendRawTransaction returned a non-string result: {result}"))
+    pub fn chain_id(&self) -> color_eyre::eyre::Result<u64> {
+        let Quantity(id) = self.rpc.call("eth_chainId", NO_PARAMS)?;
+        Ok(id as u64)
+    }
+
+    pub fn nonce(&self, account: Address) -> color_eyre::eyre::Result<u64> {
+        let Quantity(nonce) = self
+            .rpc
+            .call("eth_getTransactionCount", (address(account), "pending"))?;
+        Ok(nonce as u64)
+    }
+
+    pub fn balance(&self, account: Address) -> color_eyre::eyre::Result<u128> {
+        let Quantity(balance) = self
+            .rpc
+            .call("eth_getBalance", (address(account), "latest"))?;
+        Ok(balance)
+    }
+
+    pub fn gas_price(&self) -> color_eyre::eyre::Result<u128> {
+        let Quantity(price) = self.rpc.call("eth_gasPrice", NO_PARAMS)?;
+        Ok(price)
+    }
+
+    pub fn max_priority_fee(&self) -> u128 {
+        const DEFAULT_TIP: u128 = 1_500_000_000; // 1.5 gwei
+        self.rpc
+            .call("eth_maxPriorityFeePerGas", NO_PARAMS)
+            .map_or(DEFAULT_TIP, |Quantity(tip)| tip)
+    }
+
+    pub fn estimate_gas(
+        &self,
+        from: Address,
+        to: Address,
+        value_wei: u128,
+        data: &[u8],
+    ) -> color_eyre::eyre::Result<u128> {
+        let request = CallRequest {
+            from,
+            to,
+            value: quantity(value_wei),
+            data: (!data.is_empty()).then(|| bytes(data)),
+        };
+        let Quantity(gas) = self.rpc.call("eth_estimateGas", (request,)).wrap_err(
+            "Gas estimation failed - the transaction would likely revert as constructed \
+             (check the target address, calldata, and the derived account's balance)",
+        )?;
+        Ok(gas)
+    }
+
+    /// Broadcasts RLP-encoded signed transaction bytes; returns the tx hash.
+    pub fn send_raw_transaction(&self, raw_tx: &[u8]) -> color_eyre::eyre::Result<String> {
+        self.rpc.call("eth_sendRawTransaction", (bytes(raw_tx),))
+    }
 }

@@ -26,7 +26,7 @@ const GAS_BUDGET_MIST: u64 = 10_000_000;
 #[derive(Debug, Clone)]
 pub enum SuiActionSpec {
     /// Native SUI transfer: SplitCoins from the gas coin + TransferObjects.
-    Transfer { to: [u8; 32], mist: u64 },
+    Transfer { to: SuiAddress, mist: u64 },
 }
 
 /// What goes into the envelope: the transaction plus the sender's public key,
@@ -70,7 +70,9 @@ impl ChainAdapter for SuiAdapter {
         let sender = derive_sui_address(SuiSignatureScheme::Ed25519, &pk);
         let sender_hex = sender.to_hex();
 
-        let gas_price = rpc::reference_gas_price(&chain.rpc_url)
+        let rpc = rpc::Client::new(&chain.rpc_url)?;
+        let gas_price = rpc
+            .reference_gas_price()
             .wrap_err_with(|| format!("Failed to fetch the gas price from {}", chain.rpc_url))?;
 
         let (amount_mist, to) = match &self.spec {
@@ -80,7 +82,7 @@ impl ChainAdapter for SuiAdapter {
 
         // Select gas coins (largest first) until they cover amount + budget;
         // the transfer amount is split off the (merged) gas coin.
-        let mut coins = rpc::sui_coins(&chain.rpc_url, &sender_hex)?;
+        let mut coins = rpc.sui_coins(&sender_hex)?;
         coins.sort_by_key(|coin| std::cmp::Reverse(coin.balance));
         let total_balance: u64 = coins.iter().map(|coin| coin.balance).sum();
         let mut payment = Vec::new();
@@ -109,10 +111,7 @@ impl ChainAdapter for SuiAdapter {
 
         let tx = SuiTransaction {
             kind: TransactionKind::ProgrammableTransaction(ProgrammableTransaction {
-                inputs: vec![
-                    CallArg::pure_u64(amount_mist),
-                    CallArg::pure_address(SuiAddress(to)),
-                ],
+                inputs: vec![CallArg::pure_u64(amount_mist), CallArg::pure_address(to)],
                 commands: vec![
                     Command::SplitCoins {
                         coin: Argument::GasCoin,
@@ -162,7 +161,7 @@ impl ChainAdapter for SuiAdapter {
             chain_key = chain.chain_key,
             near_network = chain.near_network,
             amount = format_native(amount_mist, chain),
-            to_hex = SuiAddress(to).to_hex(),
+            to_hex = to.to_hex(),
             balance = format_native(total_balance, chain),
             budget = format_native(GAS_BUDGET_MIST, chain),
             gas_coins = tx.gas_data.payment.len(),
@@ -214,8 +213,7 @@ pub fn assemble_and_broadcast(
     let signature = ed25519_signature_from_mpc(response, &payload.sender_public_key)?;
 
     let engine = base64::engine::general_purpose::STANDARD;
-    rpc::execute_transaction(
-        &chain.rpc_url,
+    rpc::Client::new(&chain.rpc_url)?.execute_transaction(
         &engine.encode(payload.tx.tx_bytes()),
         &engine.encode(signature.to_bytes()),
     )

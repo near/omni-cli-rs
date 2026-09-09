@@ -74,7 +74,7 @@ pub struct Transfer {
     /// Recipient address (base58):
     receiver: SolanaAddressArg,
     #[interactive_clap(skip_default_input_arg)]
-    /// Amount to transfer (e.g. 0.5 SOL):
+    /// Amount to transfer (e.g. 0.5 SOL, 0.5 FOGO, 5000 lamports):
     amount: SolAmount,
     /// Externally created durable nonce account for the DAO route (authority must be the derived address)
     #[interactive_clap(long)]
@@ -94,7 +94,7 @@ impl TransferContext {
         scope: &<Transfer as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
     ) -> color_eyre::eyre::Result<Self> {
         let spec = SvmActionSpec::Transfer {
-            to: scope.receiver.to_string(),
+            to: scope.receiver.0,
             lamports: scope.amount.lamports,
         };
         Ok(Self(SpecContext {
@@ -104,7 +104,7 @@ impl TransferContext {
             mpc_config: previous_context.selected.mpc_config.clone(),
             adapter: Arc::new(SvmAdapter {
                 spec,
-                nonce_account_override: scope.nonce_account.map(|address| address.to_string()),
+                nonce_account_override: scope.nonce_account.map(|address| address.0),
             }),
         }))
     }
@@ -117,9 +117,20 @@ impl From<TransferContext> for SpecContext {
 }
 
 impl Transfer {
-    fn input_amount(_context: &SvmChainContext) -> color_eyre::eyre::Result<Option<SolAmount>> {
+    fn input_amount(context: &SvmChainContext) -> color_eyre::eyre::Result<Option<SolAmount>> {
+        // Show the chain's own symbol in the example (SOL, FOGO, ...).
+        let symbol = context
+            .selected
+            .chain_def
+            .networks
+            .values()
+            .find_map(|network| network.symbol.clone())
+            .unwrap_or_else(|| "SOL".to_string());
         Ok(Some(
-            CustomType::new("Amount to transfer (e.g. 0.5 SOL, 5000 lamports):").prompt()?,
+            CustomType::new(&format!(
+                "Amount to transfer (e.g. 0.5 {symbol}, 5000 lamports):"
+            ))
+            .prompt()?,
         ))
     }
 }

@@ -81,17 +81,24 @@ pub fn derived_public_key(
     path: &str,
     domain_id: u64,
 ) -> color_eyre::eyre::Result<near_crypto::PublicKey> {
+    #[derive(serde::Serialize)]
+    struct DerivedPublicKeyArgs<'a> {
+        path: &'a str,
+        predecessor: &'a str,
+        domain_id: u64,
+    }
+
     let contract = near_api::Contract(
         mpc_contract
             .as_str()
             .parse()
             .wrap_err("Invalid MPC contract account id")?,
     );
-    let args = serde_json::json!({
-        "path": path,
-        "predecessor": owner.as_str(),
-        "domain_id": domain_id,
-    });
+    let args = DerivedPublicKeyArgs {
+        path,
+        predecessor: owner.as_str(),
+        domain_id,
+    };
     let response = block_on(
         contract
             .call_function("derived_public_key", args)
@@ -167,24 +174,44 @@ pub fn fetch_derived_keys(
     Ok(DerivedKeys { secp256k1, ed25519 })
 }
 
-/// JSON arguments for the MPC contract's `sign` method (v2 interface).
+/// Arguments of the MPC contract's `sign` method (v2 interface).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SignArgs {
+    pub request: SignRequest,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SignRequest {
+    pub path: String,
+    pub payload_v2: SignPayload,
+    pub domain_id: u64,
+}
+
+/// Externally tagged to match the contract: `{"Ecdsa": "<hex>"}` /
+/// `{"Eddsa": "<hex>"}`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub enum SignPayload {
+    Ecdsa(String),
+    Eddsa(String),
+}
+
 pub fn sign_request_args(
     payload: &[u8],
     scheme: SignatureScheme,
     path: &str,
     mpc_config: &MpcConfig,
-) -> serde_json::Value {
+) -> SignArgs {
     let payload_v2 = match scheme {
-        SignatureScheme::Secp256k1 => serde_json::json!({ "Ecdsa": hex::encode(payload) }),
-        SignatureScheme::Ed25519 => serde_json::json!({ "Eddsa": hex::encode(payload) }),
+        SignatureScheme::Secp256k1 => SignPayload::Ecdsa(hex::encode(payload)),
+        SignatureScheme::Ed25519 => SignPayload::Eddsa(hex::encode(payload)),
     };
-    serde_json::json!({
-        "request": {
-            "path": path,
-            "payload_v2": payload_v2,
-            "domain_id": domain_id(mpc_config, scheme),
-        }
-    })
+    SignArgs {
+        request: SignRequest {
+            path: path.to_string(),
+            payload_v2,
+            domain_id: domain_id(mpc_config, scheme),
+        },
+    }
 }
 
 /// Budget for all `sign` actions together: they must fit in one NEAR
@@ -216,9 +243,8 @@ pub fn sign_actions(
             near_primitives::transaction::Action::FunctionCall(Box::new(
                 near_primitives::transaction::FunctionCallAction {
                     method_name: "sign".to_string(),
-                    args: sign_request_args(payload, scheme, path, mpc_config)
-                        .to_string()
-                        .into_bytes(),
+                    args: serde_json::to_vec(&sign_request_args(payload, scheme, path, mpc_config))
+                        .expect("SignArgs serialization is infallible"),
                     gas: near_primitives::gas::Gas::from_gas(
                         near_gas::NearGas::from_tgas(gas_tgas).as_gas(),
                     ),
@@ -336,14 +362,26 @@ mod tests {
     #[test]
     fn sign_args_use_v2_interface() {
         let config = MpcConfig::default();
-        let secp = sign_request_args(&[0xab; 32], SignatureScheme::Secp256k1, "p", &config);
+        let secp = serde_json::to_value(sign_request_args(
+            &[0xab; 32],
+            SignatureScheme::Secp256k1,
+            "p",
+            &config,
+        ))
+        .unwrap();
         assert_eq!(secp["request"]["domain_id"], 0);
         assert_eq!(
             secp["request"]["payload_v2"]["Ecdsa"],
             hex::encode([0xab; 32])
         );
 
-        let ed = sign_request_args(&[0x01, 0x02], SignatureScheme::Ed25519, "p", &config);
+        let ed = serde_json::to_value(sign_request_args(
+            &[0x01, 0x02],
+            SignatureScheme::Ed25519,
+            "p",
+            &config,
+        ))
+        .unwrap();
         assert_eq!(ed["request"]["domain_id"], 1);
         assert_eq!(ed["request"]["payload_v2"]["Eddsa"], "0102");
     }

@@ -410,7 +410,7 @@ impl From<SignAsDaoContext> for near_cli_rs::commands::ActionContext {
                      proposal is rejected)\n"
                 );
 
-                let sign_args_list: Vec<serde_json::Value> = built
+                let sign_args_list: Vec<crate::mpc::SignArgs> = built
                     .payloads
                     .iter()
                     .map(|payload| {

@@ -157,6 +157,19 @@ explorer_tx_url = "https://solscan.io/tx/{hash}?cluster=devnet"
 symbol = "SOL"
 decimals = 9
 
+[chains.fogo]
+family = "svm"
+[chains.fogo.networks.mainnet]
+rpc_url = "https://mainnet.fogo.io"
+explorer_tx_url = "https://fogoscan.com/tx/"
+symbol = "FOGO"
+decimals = 9
+[chains.fogo.networks.testnet]
+rpc_url = "https://testnet.fogo.io"
+explorer_tx_url = "https://fogoscan.com/tx/{hash}?cluster=testnet"
+symbol = "FOGO"
+decimals = 9
+
 [chains.aptos]
 family = "aptos"
 [chains.aptos.networks.mainnet]
@@ -449,6 +462,15 @@ mod tests {
         assert_eq!(
             (sol.symbol.as_str(), sol.decimals, sol.chain_id),
             ("SOL", 9, None)
+        );
+        let fogo = config.chains["fogo"].resolve("fogo", "testnet").unwrap();
+        assert_eq!(
+            (fogo.family.as_str(), fogo.symbol.as_str(), fogo.decimals),
+            ("svm", "FOGO", 9)
+        );
+        assert_eq!(
+            fogo.explorer_link("Sig123").unwrap(),
+            "https://fogoscan.com/tx/Sig123?cluster=testnet"
         );
         let apt = config.chains["aptos"].resolve("aptos", "mainnet").unwrap();
         assert_eq!((apt.symbol.as_str(), apt.decimals), ("APT", 8));
