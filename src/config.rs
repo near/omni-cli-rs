@@ -14,9 +14,13 @@ const DEFAULT_CONFIG_TOML: &str = r#"# omni-cli configuration: destination-chain
 # RPC endpoint / chain id resolve when `network-config` is chosen (NEAR
 # mainnet -> the chain's mainnet, NEAR testnet -> its testnet). Adding one
 # more chain is a new [chains.<name>] entry, not a new omni-cli release.
+#
+# explorer_tx_url: the tx hash is appended, or substituted for "{hash}" if
+# the placeholder is present.
 
 [mpc]
-sign_gas_tgas = 250
+# Gas per MPC sign call; the live signer contracts require >= 15 TGas.
+sign_gas_tgas = 30
 sign_deposit_yoctonear = 1
 # Key domains on the MPC signer contract (see its state() view method):
 secp256k1_domain_id = 0
@@ -28,13 +32,13 @@ ed25519_domain_id = 1
 # mainnet = "v1.signer"
 # testnet = "v1.signer-prod.testnet"
 
-[chains.ethereum]
+[chains.eth]
 family = "evm"
-[chains.ethereum.networks.mainnet]
+[chains.eth.networks.mainnet]
 rpc_url = "https://ethereum-rpc.publicnode.com"
 chain_id = 1
 explorer_tx_url = "https://etherscan.io/tx/"
-[chains.ethereum.networks.testnet]
+[chains.eth.networks.testnet]
 rpc_url = "https://ethereum-sepolia-rpc.publicnode.com"
 chain_id = 11155111
 explorer_tx_url = "https://sepolia.etherscan.io/tx/"
@@ -50,16 +54,92 @@ rpc_url = "https://sepolia.base.org"
 chain_id = 84532
 explorer_tx_url = "https://sepolia.basescan.org/tx/"
 
-[chains.arbitrum]
+[chains.arb]
 family = "evm"
-[chains.arbitrum.networks.mainnet]
+[chains.arb.networks.mainnet]
 rpc_url = "https://arb1.arbitrum.io/rpc"
 chain_id = 42161
 explorer_tx_url = "https://arbiscan.io/tx/"
-[chains.arbitrum.networks.testnet]
+[chains.arb.networks.testnet]
 rpc_url = "https://sepolia-rollup.arbitrum.io/rpc"
 chain_id = 421614
 explorer_tx_url = "https://sepolia.arbiscan.io/tx/"
+
+[chains.bnb]
+family = "evm"
+[chains.bnb.networks.mainnet]
+rpc_url = "https://bsc-dataseed.bnbchain.org"
+chain_id = 56
+explorer_tx_url = "https://bscscan.com/tx/"
+symbol = "BNB"
+[chains.bnb.networks.testnet]
+rpc_url = "https://bsc-testnet-dataseed.bnbchain.org"
+chain_id = 97
+explorer_tx_url = "https://testnet.bscscan.com/tx/"
+symbol = "BNB"
+
+[chains.pol]
+family = "evm"
+[chains.pol.networks.mainnet]
+rpc_url = "https://polygon-rpc.com"
+chain_id = 137
+explorer_tx_url = "https://polygonscan.com/tx/"
+symbol = "POL"
+[chains.pol.networks.testnet]
+rpc_url = "https://rpc-amoy.polygon.technology"
+chain_id = 80002
+explorer_tx_url = "https://amoy.polygonscan.com/tx/"
+symbol = "POL"
+
+[chains.hyperevm]
+family = "evm"
+[chains.hyperevm.networks.mainnet]
+rpc_url = "https://rpc.hyperliquid.xyz/evm"
+chain_id = 999
+explorer_tx_url = "https://hyperevmscan.io/tx/"
+symbol = "HYPE"
+[chains.hyperevm.networks.testnet]
+rpc_url = "https://rpc.hyperliquid-testnet.xyz/evm"
+chain_id = 998
+explorer_tx_url = "https://testnet.purrsec.com/tx/"
+symbol = "HYPE"
+
+[chains.abs]
+family = "evm"
+[chains.abs.networks.mainnet]
+rpc_url = "https://api.mainnet.abs.xyz"
+chain_id = 2741
+explorer_tx_url = "https://abscan.org/tx/"
+[chains.abs.networks.testnet]
+rpc_url = "https://api.testnet.abs.xyz"
+chain_id = 11124
+explorer_tx_url = "https://sepolia.abscan.org/tx/"
+
+[chains.btc]
+family = "utxo"
+[chains.btc.networks.mainnet]
+rpc_url = "https://blockstream.info/api"
+explorer_tx_url = "https://mempool.space/tx/"
+symbol = "BTC"
+decimals = 8
+[chains.btc.networks.testnet]
+rpc_url = "https://blockstream.info/testnet/api"
+explorer_tx_url = "https://mempool.space/testnet/tx/"
+symbol = "BTC"
+decimals = 8
+
+[chains.ton]
+family = "ton"
+[chains.ton.networks.mainnet]
+rpc_url = "https://toncenter.com/api/v2"
+explorer_tx_url = "https://tonviewer.com/transaction/"
+symbol = "TON"
+decimals = 9
+[chains.ton.networks.testnet]
+rpc_url = "https://testnet.toncenter.com/api/v2"
+explorer_tx_url = "https://testnet.tonviewer.com/transaction/"
+symbol = "TON"
+decimals = 9
 
 [chains.solana]
 family = "svm"
@@ -70,8 +150,34 @@ symbol = "SOL"
 decimals = 9
 [chains.solana.networks.testnet]
 rpc_url = "https://api.devnet.solana.com"
-explorer_tx_url = "https://solscan.io/tx/?cluster=devnet&tx="
+explorer_tx_url = "https://solscan.io/tx/{hash}?cluster=devnet"
 symbol = "SOL"
+decimals = 9
+
+[chains.aptos]
+family = "aptos"
+[chains.aptos.networks.mainnet]
+rpc_url = "https://fullnode.mainnet.aptoslabs.com"
+explorer_tx_url = "https://explorer.aptoslabs.com/txn/{hash}?network=mainnet"
+symbol = "APT"
+decimals = 8
+[chains.aptos.networks.testnet]
+rpc_url = "https://fullnode.testnet.aptoslabs.com"
+explorer_tx_url = "https://explorer.aptoslabs.com/txn/{hash}?network=testnet"
+symbol = "APT"
+decimals = 8
+
+[chains.sui]
+family = "sui"
+[chains.sui.networks.mainnet]
+rpc_url = "https://fullnode.mainnet.sui.io:443"
+explorer_tx_url = "https://suiscan.xyz/mainnet/tx/"
+symbol = "SUI"
+decimals = 9
+[chains.sui.networks.testnet]
+rpc_url = "https://fullnode.testnet.sui.io:443"
+explorer_tx_url = "https://suiscan.xyz/testnet/tx/"
+symbol = "SUI"
 decimals = 9
 "#;
 
@@ -114,7 +220,7 @@ impl Default for MpcConfig {
 }
 
 fn default_sign_gas_tgas() -> u64 {
-    250
+    30
 }
 
 fn default_sign_deposit_yoctonear() -> u128 {
@@ -206,6 +312,10 @@ impl ChainDef {
         })?;
         let (default_symbol, default_decimals) = match self.family.as_str() {
             "svm" => ("SOL", 9),
+            "aptos" => ("APT", 8),
+            "sui" => ("SUI", 9),
+            "utxo" => ("BTC", 8),
+            "ton" => ("TON", 9),
             _ => ("ETH", 18),
         };
         Ok(ResolvedChain {
@@ -226,9 +336,13 @@ impl ChainDef {
 
 impl ResolvedChain {
     pub fn explorer_link(&self, tx_hash: &str) -> Option<String> {
-        self.explorer_tx_url
-            .as_ref()
-            .map(|prefix| format!("{prefix}{tx_hash}"))
+        self.explorer_tx_url.as_ref().map(|template| {
+            if template.contains("{hash}") {
+                template.replace("{hash}", tx_hash)
+            } else {
+                format!("{template}{tx_hash}")
+            }
+        })
     }
 }
 
@@ -290,19 +404,48 @@ mod tests {
         assert_eq!(config.mpc.secp256k1_domain_id, 0);
         assert_eq!(config.mpc.ed25519_domain_id, 1);
 
-        let ethereum = &config.chains["ethereum"];
-        let mainnet = ethereum.resolve("ethereum", "mainnet").unwrap();
-        assert_eq!(mainnet.chain_id, Some(1));
-        let testnet = ethereum.resolve("ethereum", "testnet").unwrap();
-        assert_eq!(testnet.chain_id, Some(11155111));
+        for (key, mainnet_id, testnet_id) in [
+            ("eth", 1, 11155111),
+            ("base", 8453, 84532),
+            ("arb", 42161, 421614),
+            ("bnb", 56, 97),
+            ("pol", 137, 80002),
+            ("hyperevm", 999, 998),
+            ("abs", 2741, 11124),
+        ] {
+            let chain = &config.chains[key];
+            assert_eq!(chain.family, "evm");
+            assert_eq!(
+                chain.resolve(key, "mainnet").unwrap().chain_id,
+                Some(mainnet_id)
+            );
+            assert_eq!(
+                chain.resolve(key, "testnet").unwrap().chain_id,
+                Some(testnet_id)
+            );
+        }
+        assert_eq!(config.chains["bnb"].resolve("bnb", "mainnet").unwrap().symbol, "BNB");
 
-        let solana = &config.chains["solana"];
-        let sol = solana.resolve("solana", "testnet").unwrap();
-        assert_eq!(sol.symbol, "SOL");
-        assert_eq!(sol.decimals, 9);
-        assert!(sol.chain_id.is_none());
+        let sol = config.chains["solana"].resolve("solana", "testnet").unwrap();
+        assert_eq!((sol.symbol.as_str(), sol.decimals, sol.chain_id), ("SOL", 9, None));
+        let apt = config.chains["aptos"].resolve("aptos", "mainnet").unwrap();
+        assert_eq!((apt.symbol.as_str(), apt.decimals), ("APT", 8));
+        assert_eq!(
+            apt.explorer_link("0xabc").unwrap(),
+            "https://explorer.aptoslabs.com/txn/0xabc?network=mainnet"
+        );
+        let btc = config.chains["btc"].resolve("btc", "mainnet").unwrap();
+        assert_eq!((btc.family.as_str(), btc.symbol.as_str(), btc.decimals), ("utxo", "BTC", 8));
+        let ton = config.chains["ton"].resolve("ton", "testnet").unwrap();
+        assert_eq!((ton.family.as_str(), ton.symbol.as_str(), ton.decimals), ("ton", "TON", 9));
+        let sui = config.chains["sui"].resolve("sui", "testnet").unwrap();
+        assert_eq!((sui.symbol.as_str(), sui.decimals), ("SUI", 9));
+        assert_eq!(
+            sui.explorer_link("Digest123").unwrap(),
+            "https://suiscan.xyz/testnet/tx/Digest123"
+        );
 
-        let missing = ethereum.resolve("ethereum", "localnet").unwrap_err();
+        let missing = config.chains["eth"].resolve("eth", "localnet").unwrap_err();
         assert!(missing.to_string().contains("localnet"));
     }
 }

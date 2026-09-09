@@ -56,6 +56,53 @@ pub fn balance(rpc_url: &str, address_base58: &str) -> color_eyre::eyre::Result<
         .ok_or_else(|| eyre!("getBalance returned a non-numeric value"))
 }
 
+/// The state of an initialized durable nonce account.
+#[derive(Debug, Clone)]
+pub struct NonceAccountInfo {
+    pub authority: String,
+    pub durable_nonce_blockhash: String,
+}
+
+/// Fetches and parses a durable nonce account. Returns `None` if the account
+/// does not exist.
+pub fn nonce_account(
+    rpc_url: &str,
+    address_base58: &str,
+) -> color_eyre::eyre::Result<Option<NonceAccountInfo>> {
+    let result = call(
+        rpc_url,
+        "getAccountInfo",
+        serde_json::json!([address_base58, { "encoding": "jsonParsed", "commitment": "confirmed" }]),
+    )?;
+    if result["value"].is_null() {
+        return Ok(None);
+    }
+    let info = &result["value"]["data"]["parsed"]["info"];
+    let authority = info["authority"]
+        .as_str()
+        .ok_or_else(|| eyre!("Account {address_base58} is not a parsed nonce account"))?
+        .to_string();
+    let durable_nonce_blockhash = info["blockhash"]
+        .as_str()
+        .ok_or_else(|| eyre!("Nonce account {address_base58} has no stored blockhash"))?
+        .to_string();
+    Ok(Some(NonceAccountInfo {
+        authority,
+        durable_nonce_blockhash,
+    }))
+}
+
+/// Lamports needed to make an account of `size` bytes rent-exempt.
+pub fn minimum_rent(rpc_url: &str, size: u64) -> color_eyre::eyre::Result<u64> {
+    call(
+        rpc_url,
+        "getMinimumBalanceForRentExemption",
+        serde_json::json!([size]),
+    )?
+    .as_u64()
+    .ok_or_else(|| eyre!("getMinimumBalanceForRentExemption returned a non-numeric value"))
+}
+
 /// Broadcasts base64-encoded wire bytes; returns the transaction signature.
 pub fn send_transaction(rpc_url: &str, tx_base64: &str) -> color_eyre::eyre::Result<String> {
     let result = call(

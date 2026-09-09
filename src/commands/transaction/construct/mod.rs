@@ -6,9 +6,13 @@ use strum::{EnumDiscriminants, EnumIter, EnumMessage};
 use crate::chains::ChainAdapter;
 use crate::config::{ChainDef, MpcConfig};
 
+pub mod aptos;
 pub mod evm;
 pub mod sign_as;
+pub mod sui;
 pub mod svm;
+pub mod ton;
+pub mod utxo;
 
 #[derive(Debug, Clone, interactive_clap::InteractiveClap)]
 #[interactive_clap(context = near_cli_rs::GlobalContext)]
@@ -32,6 +36,20 @@ pub enum Family {
     ))]
     /// SVM chains (Solana, Fogo, ...)
     Svm(self::svm::SvmChain),
+    #[strum_discriminants(strum(
+        message = "utxo        -   UTXO chains (Bitcoin; P2WPKH, one MPC signature per input)"
+    ))]
+    /// UTXO chains (Bitcoin; P2WPKH, one MPC signature per input)
+    Utxo(self::utxo::UtxoChain),
+    #[strum_discriminants(strum(message = "aptos       -   Aptos"))]
+    /// Aptos
+    Aptos(self::aptos::AptosChain),
+    #[strum_discriminants(strum(message = "sui         -   Sui"))]
+    /// Sui
+    Sui(self::sui::SuiChain),
+    #[strum_discriminants(strum(message = "ton         -   TON (v5r1 wallet, auto-deployed on first use)"))]
+    /// TON (v5r1 wallet, auto-deployed on first use)
+    Ton(self::ton::TonChain),
 }
 
 /// Everything accumulated before the `derivation-path` step, family-erased:
@@ -97,12 +115,7 @@ pub fn input_chain(family: &str) -> color_eyre::eyre::Result<Option<String>> {
         .chains
         .iter()
         .filter(|(_, def)| def.family == family)
-        .map(|(key, def)| {
-            format!(
-                "{key} (NEAR networks: {})",
-                def.networks.keys().cloned().collect::<Vec<_>>().join(", ")
-            )
-        })
+        .map(|(key, _)| key.clone())
         .collect();
     options.sort();
     if options.is_empty() {

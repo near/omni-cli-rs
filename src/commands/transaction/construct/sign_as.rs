@@ -197,18 +197,12 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
 
                 let mpc_contract =
                     crate::mpc::mpc_contract_id(&spec_context.mpc_config, network_config)?;
-                let actions = built
-                    .payloads
-                    .iter()
-                    .map(|payload| {
-                        crate::mpc::sign_action(
-                            payload,
-                            spec_context.adapter.scheme(),
-                            &path,
-                            &spec_context.mpc_config,
-                        )
-                    })
-                    .collect();
+                let actions = crate::mpc::sign_actions(
+                    &built.payloads,
+                    spec_context.adapter.scheme(),
+                    &path,
+                    &spec_context.mpc_config,
+                );
                 Ok(near_cli_rs::commands::PrepopulatedTransaction {
                     signer_id: owner.clone(),
                     receiver_id: mpc_contract,

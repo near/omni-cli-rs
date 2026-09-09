@@ -56,10 +56,15 @@ impl SvmChain {
 /// Select the action:
 pub enum SvmAction {
     #[strum_discriminants(strum(
-        message = "transfer   -   Transfer the native token (SOL, ...)"
+        message = "transfer      -   Transfer the native token (SOL, ...)"
     ))]
     /// Transfer the native token (SOL, ...)
     Transfer(Transfer),
+    #[strum_discriminants(strum(
+        message = "setup-nonce   -   One-time durable nonce account setup (enables the DAO route)"
+    ))]
+    /// One-time durable nonce account setup (enables the DAO route)
+    SetupNonce(SetupNonce),
 }
 
 #[derive(Debug, Clone, interactive_clap::InteractiveClap)]
@@ -71,6 +76,10 @@ pub struct Transfer {
     #[interactive_clap(skip_default_input_arg)]
     /// Amount to transfer (e.g. 0.5 SOL):
     amount: SolAmount,
+    /// Externally created durable nonce account for the DAO route (authority must be the derived address)
+    #[interactive_clap(long)]
+    #[interactive_clap(skip_interactive_input)]
+    nonce_account: Option<SolanaAddressArg>,
     #[interactive_clap(named_arg)]
     /// Derivation path - determines the acting foreign account
     derivation_path: crate::commands::transaction::construct::sign_as::DerivationPath,
@@ -93,7 +102,10 @@ impl TransferContext {
             chain_key: previous_context.selected.chain_key.clone(),
             chain_def: previous_context.selected.chain_def.clone(),
             mpc_config: previous_context.selected.mpc_config.clone(),
-            adapter: Arc::new(SvmAdapter { spec }),
+            adapter: Arc::new(SvmAdapter {
+                spec,
+                nonce_account_override: scope.nonce_account.map(|address| address.to_string()),
+            }),
         }))
     }
 }
@@ -109,5 +121,41 @@ impl Transfer {
         Ok(Some(
             CustomType::new("Amount to transfer (e.g. 0.5 SOL, 5000 lamports):").prompt()?,
         ))
+    }
+}
+
+#[derive(Debug, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(input_context = SvmChainContext)]
+#[interactive_clap(output_context = SetupNonceContext)]
+pub struct SetupNonce {
+    #[interactive_clap(named_arg)]
+    /// Derivation path - determines the acting foreign account
+    derivation_path: crate::commands::transaction::construct::sign_as::DerivationPath,
+}
+
+#[derive(Clone)]
+pub struct SetupNonceContext(SpecContext);
+
+impl SetupNonceContext {
+    pub fn from_previous_context(
+        previous_context: SvmChainContext,
+        _scope: &<SetupNonce as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
+    ) -> color_eyre::eyre::Result<Self> {
+        Ok(Self(SpecContext {
+            global_context: previous_context.global_context,
+            chain_key: previous_context.selected.chain_key.clone(),
+            chain_def: previous_context.selected.chain_def.clone(),
+            mpc_config: previous_context.selected.mpc_config.clone(),
+            adapter: Arc::new(SvmAdapter {
+                spec: SvmActionSpec::SetupNonce,
+                nonce_account_override: None,
+            }),
+        }))
+    }
+}
+
+impl From<SetupNonceContext> for SpecContext {
+    fn from(item: SetupNonceContext) -> Self {
+        item.0
     }
 }

@@ -23,22 +23,30 @@ The `construct` command with both execution routes, built on a family-generic
 `ChainAdapter` (chain-signatures v2 interface: key domains, `payload_v2`).
 
 - [x] `construct evm <chain>` — `transfer` / `contract-call` / `raw`
-      (secp256k1, domain 0)
-- [x] `construct svm <chain>` — `transfer` (Solana/Fogo; ed25519, domain 1;
-      `sign-as-account` only until durable-nonce support lands — a recent
-      blockhash dies in ~60-90 s, long before a DAO can vote)
+      (secp256k1, domain 0; defaults: eth, base, arb, bnb, pol, hyperevm, abs)
+- [x] `construct svm <chain>` — `transfer` + `setup-nonce` (Solana/Fogo;
+      ed25519, domain 1). The DAO route uses a durable nonce account: create
+      the deterministic one with `setup-nonce` (account-owned paths) or pass
+      an externally created one via `--nonce-account` (DAO-owned paths)
+- [x] `construct aptos <chain>` — `transfer` (ed25519; DAO route supported —
+      expiration is set 14 days out)
+- [x] `construct sui <chain>` — `transfer` (ed25519; DAO route supported —
+      no expiry, but gas-coin references go stale if the coins are touched)
+- [x] `construct utxo btc` — `transfer` (P2WPKH; one MPC signature per input,
+      matched to inputs by verification; change returns to the sender;
+      Esplora API for UTXOs/fees/broadcast)
+- [x] `construct ton <chain>` — `transfer` (v5r1 wallet; ed25519 over the
+      body cell hash; the wallet deploys itself with its first transaction)
 - [x] `sign-as-account` — your account calls the MPC directly; the CLI
       extracts the signature from the receipts, assembles, and broadcasts
 - [x] `sign-as-dao` — wraps the sign request in a SputnikDAO proposal with a
       reviewable envelope in the description
-- [ ] UTXO (Bitcoin/Zcash), Aptos, Sui, TON families — next, one adapter each
-- [ ] Starknet — blocked on curve support (STARK curve is not an MPC domain;
-      requires a secp256k1 account contract route)
 - [x] `transaction broadcast <near-tx-hash> <tx-signer>` — finalizes an approved
       DAO proposal (envelope recovered from the proposal) or retries a failed
       direct-route broadcast (`--unsigned-tx` envelope blob)
+- [ ] Zcash (transparent) — needs an indexer choice; the builders exist
 - [ ] `proposal list / review / vote`
-- [ ] `account show / balance`, `account setup-nonce` (SVM durable nonces)
+- [ ] `account show / balance`
 
 ## Usage
 
@@ -47,12 +55,12 @@ The `construct` command with both execution routes, built on a family-generic
 omni transaction construct
 
 # Direct: your account owns the derived foreign account (sub-minute end to end)
-omni transaction construct evm ethereum \
+omni transaction construct evm eth \
     transfer 0x000000000000000000000000000000000000dEaD '0.001 ETH' \
     derivation-path my-treasury \
     sign-as-account you.testnet \
     network-config testnet sign-with-keychain send
-# (with network-config testnet, `ethereum` resolves to Sepolia automatically)
+# (with network-config testnet, `eth` resolves to Sepolia automatically)
 
 # Solana works the same way (ed25519 key domain):
 omni transaction construct svm solana \

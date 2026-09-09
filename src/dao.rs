@@ -44,6 +44,7 @@ pub fn add_proposal_action(
     mpc_config: &MpcConfig,
     proposal_bond: u128,
 ) -> near_primitives::transaction::Action {
+    let gas_tgas = crate::mpc::sign_gas_per_action_tgas(mpc_config, sign_args_list.len());
     let sign_actions: Vec<serde_json::Value> = sign_args_list
         .iter()
         .map(|sign_args| {
@@ -52,9 +53,7 @@ pub fn add_proposal_action(
                 "args": base64::engine::general_purpose::STANDARD
                     .encode(sign_args.to_string()),
                 "deposit": mpc_config.sign_deposit_yoctonear.to_string(),
-                "gas": near_gas::NearGas::from_tgas(mpc_config.sign_gas_tgas)
-                    .as_gas()
-                    .to_string(),
+                "gas": near_gas::NearGas::from_tgas(gas_tgas).as_gas().to_string(),
             })
         })
         .collect();

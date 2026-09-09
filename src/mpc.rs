@@ -149,26 +149,48 @@ pub fn sign_request_args(
     })
 }
 
-/// One `sign` FunctionCall action, used directly (sign-as-account) or nested
-/// inside a SputnikDAO proposal (sign-as-dao).
-pub fn sign_action(
-    payload: &[u8],
+/// Budget for all `sign` actions together: they must fit in one NEAR
+/// transaction / one `act_proposal` execution (300 TGas cap) with headroom.
+const MAX_TOTAL_SIGN_GAS_TGAS: u64 = 280;
+
+/// Gas to attach to each of `payload_count` sign actions: the configured
+/// per-sign gas, shrunk so a multi-payload transaction (one signature per
+/// UTXO input) still fits the 300 TGas cap. The live signer contracts
+/// require >= 15 TGas per call.
+pub fn sign_gas_per_action_tgas(mpc_config: &MpcConfig, payload_count: usize) -> u64 {
+    mpc_config
+        .sign_gas_tgas
+        .min(MAX_TOTAL_SIGN_GAS_TGAS / payload_count.max(1) as u64)
+}
+
+/// The `sign` FunctionCall actions (one per payload), used directly
+/// (sign-as-account) or mirrored inside a SputnikDAO proposal (sign-as-dao).
+pub fn sign_actions(
+    payloads: &[Vec<u8>],
     scheme: SignatureScheme,
     path: &str,
     mpc_config: &MpcConfig,
-) -> near_primitives::transaction::Action {
-    near_primitives::transaction::Action::FunctionCall(Box::new(
-        near_primitives::transaction::FunctionCallAction {
-            method_name: "sign".to_string(),
-            args: sign_request_args(payload, scheme, path, mpc_config)
-                .to_string()
-                .into_bytes(),
-            gas: near_primitives::gas::Gas::from_gas(
-                near_gas::NearGas::from_tgas(mpc_config.sign_gas_tgas).as_gas(),
-            ),
-            deposit: near_token::NearToken::from_yoctonear(mpc_config.sign_deposit_yoctonear),
-        },
-    ))
+) -> Vec<near_primitives::transaction::Action> {
+    let gas_tgas = sign_gas_per_action_tgas(mpc_config, payloads.len());
+    payloads
+        .iter()
+        .map(|payload| {
+            near_primitives::transaction::Action::FunctionCall(Box::new(
+                near_primitives::transaction::FunctionCallAction {
+                    method_name: "sign".to_string(),
+                    args: sign_request_args(payload, scheme, path, mpc_config)
+                        .to_string()
+                        .into_bytes(),
+                    gas: near_primitives::gas::Gas::from_gas(
+                        near_gas::NearGas::from_tgas(gas_tgas).as_gas(),
+                    ),
+                    deposit: near_token::NearToken::from_yoctonear(
+                        mpc_config.sign_deposit_yoctonear,
+                    ),
+                },
+            ))
+        })
+        .collect()
 }
 
 /// The signature the MPC contract resolves the `sign` yield with, as found in

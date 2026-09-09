@@ -1,5 +1,9 @@
+pub mod aptos;
 pub mod evm;
+pub mod sui;
 pub mod svm;
+pub mod ton;
+pub mod utxo;
 
 use crate::config::ResolvedChain;
 
@@ -83,6 +87,10 @@ pub fn assemble_and_broadcast(
     match chain.family.as_str() {
         evm::FAMILY => evm::assemble_and_broadcast(chain, unsigned_tx, signatures),
         svm::FAMILY => svm::assemble_and_broadcast(chain, unsigned_tx, signatures),
+        aptos::FAMILY => aptos::assemble_and_broadcast(chain, unsigned_tx, signatures),
+        sui::FAMILY => sui::assemble_and_broadcast(chain, unsigned_tx, signatures),
+        utxo::FAMILY => utxo::assemble_and_broadcast(chain, unsigned_tx, signatures),
+        ton::FAMILY => ton::assemble_and_broadcast(chain, unsigned_tx, signatures),
         other => Err(color_eyre::eyre::eyre!(
             "Chain family '{other}' is not supported for assembly/broadcast"
         )),

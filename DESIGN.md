@@ -132,7 +132,6 @@ not by chain:
 | `aptos` | Aptos | ed25519 | full signing message (SHA3-256 domain) |
 | `sui` | Sui | ed25519 | full intent message (blake2b-256 domain) |
 | `ton` | TON | ed25519 | full cell hash payload; wallet deploy handled (address = hash of stateinit) |
-| `starknet` | Starknet | STARK curve — **open question §10** | invoke v3 tx hash (Poseidon felt) |
 
 For **ed25519 families the complete transaction is on-chain in the `sign`
 args** (the MPC signs the full message), so proposals are reviewable from the
@@ -145,7 +144,7 @@ why the envelope (§6) exists.
 omni                                   # noun-first: verbs live under nouns
 ├── transaction
 │   ├── construct                      # build foreign tx → choose execution route
-│   │   → evm | svm | utxo | aptos | sui | ton | starknet
+│   │   → evm | svm | utxo | aptos | sui | ton
 │   │   → <chain>                      # logical; endpoint resolves at network-config
 │   │   → transfer | contract-call | raw   # actions vary per family
 │   │   → derivation-path <path>
@@ -248,7 +247,7 @@ proposal also uses it"):
 | Aptos | `expiration_timestamp_secs` | Set days out |
 | TON | seqno + `valid_until` | `valid_until` far out; seqno stale if concurrent proposals |
 | Sui | gas object versions | Report at review; rebuild if consumed |
-| Starknet | nonce | Same story as EVM |
+
 
 Recovery from staleness is honest and cheap: `broadcast` reports why the tx is
 no longer valid and the fix is a fresh `construct`. The old signature signs a
@@ -361,14 +360,10 @@ Two local-only interactive variants (no ABI fetching):
    `{"request": {"path", "payload_v2": {"Ecdsa"|"Eddsa": "<hex>"}, "domain_id"}}`;
    responses are tagged with `"scheme"`. Ed25519 payloads are the full message
    bytes (<= 1232 bytes, the Solana packet limit).
-2. **Starknet curve** — Starknet natively uses the STARK curve, which is NOT
-   an MPC key domain, so standard Starknet accounts cannot be MPC-controlled.
-   The route (if wanted) is a secp256k1 account contract (e.g. an EthAccount
-   implementation) deployed per derived key. Deferred.
-3. **Gas per `sign` action** — whether N sign actions (multi-input UTXO) fit
+2. **Gas per `sign` action** — whether N sign actions (multi-input UTXO) fit
    in one `act_proposal` under the 300 TGas cap with current yield/resume
    costs; otherwise multi-input spends need proposal splitting.
-4. **Envelope size in practice** — measure worst-case Solana v0 envelopes.
+3. **Envelope size in practice** — measure worst-case Solana v0 envelopes.
 
 ## 11. Repository layout & dependencies
 
@@ -380,7 +375,7 @@ src/
 │   ├── proposal/               # list / review / vote
 │   ├── broadcast/
 │   └── account/                # show, balance, setup-nonce (svm)
-├── chains/                     # ChainAdapter + evm, svm, utxo, aptos, sui, ton, starknet
+├── chains/                     # ChainAdapter + evm, svm, utxo, aptos, sui, ton
 ├── envelope.rs                 # encode / decode / verify
 ├── mpc.rs                      # sign-args construction, derived-key math,
 │                               #   signature extraction from outcomes/receipts
@@ -410,7 +405,7 @@ wrong trade.
    receipt-walking in `broadcast`, nonce-collision scan.
 3. **SVM** — first ed25519 family + durable-nonce management.
 4. **UTXO** — multi-signature-action proposals (gas question from §10).
-5. **Aptos, Sui, TON, Starknet** — thin adapters over the proven trait; TON
+5. **Aptos, Sui, TON** — thin adapters over the proven trait; TON
    adds wallet-deploy handling.
 
 ## 13. Decision log
@@ -419,7 +414,7 @@ wrong trade.
 |---|---|---|
 | Architecture | Pure CLI; DAO/account calls MPC signer directly | Intermediate "omni-controller" contract (stores tx + signature on-chain, enforces hash match in consensus) — deferred; envelope format is versioned so it can slot in later |
 | Governance | SputnikDAO v2 only | Pluggable governance trait |
-| Chains | Everything omni-transaction-rs offers, grouped into 7 family adapters | EVM-first subset |
+| Chains | Everything omni-transaction-rs offers, grouped into 6 family adapters | EVM-first subset |
 | Execution routes | One `construct` flow; route = `sign-as-account` / `sign-as-dao` enum step | Separate `send` and `proposal create` commands (duplicated construction logic) |
 | Unsigned tx storage | Base64 envelope in proposal description, intent line first | Deterministic rebuild from inputs (fragile across versions); off-chain registry (availability dependency) |
 | Batching | One foreign tx per proposal | Multi-tx envelopes (gas caps, partial-broadcast states) |
