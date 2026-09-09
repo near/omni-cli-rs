@@ -25,15 +25,9 @@ pub struct DerivationPath {
     sign_as: SignAs,
 }
 
-/// The pre-filled derivation path offered in interactive mode.
-pub const DEFAULT_DERIVATION_PATH: &str = "omni-1";
-
 impl DerivationPath {
     fn input_path(_context: &SpecContext) -> color_eyre::eyre::Result<Option<String>> {
-        let path = inquire::Text::new("Derivation path (determines the acting foreign account):")
-            .with_initial_value(DEFAULT_DERIVATION_PATH)
-            .prompt()?;
-        Ok(Some(path))
+        crate::commands::input_derivation_path()
     }
 }
 

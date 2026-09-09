@@ -7,7 +7,6 @@ use color_eyre::eyre::{ContextCompat, WrapErr};
 use strum::{EnumDiscriminants, EnumIter, EnumMessage};
 
 use crate::chains::SignatureScheme;
-use crate::commands::transaction::construct::sign_as::DEFAULT_DERIVATION_PATH;
 use crate::config::ResolvedChain;
 
 #[derive(Debug, Clone, interactive_clap::InteractiveClap)]
@@ -87,13 +86,6 @@ fn resolved_chains_by_family(
     families
 }
 
-fn input_derivation_path() -> color_eyre::eyre::Result<Option<String>> {
-    let path = inquire::Text::new("Derivation path (determines the acting foreign account):")
-        .with_initial_value(DEFAULT_DERIVATION_PATH)
-        .prompt()?;
-    Ok(Some(path))
-}
-
 fn input_owner_account_id(
     context: &near_cli_rs::GlobalContext,
 ) -> color_eyre::eyre::Result<Option<near_cli_rs::types::account_id::AccountId>> {
@@ -158,7 +150,7 @@ impl Show {
     fn input_path(
         _context: &near_cli_rs::GlobalContext,
     ) -> color_eyre::eyre::Result<Option<String>> {
-        input_derivation_path()
+        crate::commands::input_derivation_path()
     }
 }
 
@@ -256,7 +248,7 @@ impl Balance {
     fn input_path(
         _context: &near_cli_rs::GlobalContext,
     ) -> color_eyre::eyre::Result<Option<String>> {
-        input_derivation_path()
+        crate::commands::input_derivation_path()
     }
 
     fn input_chain(

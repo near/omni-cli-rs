@@ -105,7 +105,9 @@ chain_id = 84532
 explorer_tx_url = "https://sepolia.basescan.org/tx/"
 ```
 
-Adding one more chain is a config entry, not a new release.
+Adding one more chain is a config entry, not a new release. The same file
+also holds `default_derivation_path` (pre-filled in interactive prompts,
+`omni-1` out of the box) and the `[mpc]` signer settings.
 
 ## Build
 

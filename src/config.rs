@@ -18,6 +18,9 @@ const DEFAULT_CONFIG_TOML: &str = r#"# omni-cli configuration: destination-chain
 # explorer_tx_url: the tx hash is appended, or substituted for "{hash}" if
 # the placeholder is present.
 
+# Pre-filled derivation path in interactive prompts.
+default_derivation_path = "omni-1"
+
 [mpc]
 # Gas per MPC sign call; the live signer contracts require >= 15 TGas.
 sign_gas_tgas = 30
@@ -183,10 +186,17 @@ decimals = 9
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OmniConfig {
+    /// Pre-filled derivation path in interactive prompts.
+    #[serde(default = "default_derivation_path")]
+    pub default_derivation_path: String,
     #[serde(default)]
     pub mpc: MpcConfig,
     #[serde(default)]
     pub chains: BTreeMap<String, ChainDef>,
+}
+
+fn default_derivation_path() -> String {
+    "omni-1".to_string()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -399,6 +409,11 @@ mod tests {
         let config: OmniConfig = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
         assert_eq!(config.mpc.secp256k1_domain_id, 0);
         assert_eq!(config.mpc.ed25519_domain_id, 1);
+        assert_eq!(config.default_derivation_path, "omni-1");
+
+        // The field is optional in user configs
+        let minimal: OmniConfig = toml::from_str("").unwrap();
+        assert_eq!(minimal.default_derivation_path, "omni-1");
 
         for (key, mainnet_id, testnet_id) in [
             ("eth", 1, 11_155_111),
