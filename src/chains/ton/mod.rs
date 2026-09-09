@@ -178,6 +178,16 @@ impl ChainAdapter for TonAdapter {
     }
 }
 
+/// Recomputes the MPC signing payload from an envelope's unsigned tx -
+/// the byte-equality half of `proposal review`.
+pub(crate) fn signing_payloads_from_envelope(
+    unsigned_tx: &serde_json::Value,
+) -> color_eyre::eyre::Result<Vec<Vec<u8>>> {
+    let tx: TonTransaction = serde_json::from_value(unsigned_tx.clone())
+        .wrap_err("Failed to deserialize the unsigned TON transaction")?;
+    Ok(vec![tx.build_for_signing()])
+}
+
 /// Combines the unsigned TON transaction with the MPC signature and
 /// broadcasts it; returns the external message hash (hex).
 pub fn assemble_and_broadcast(

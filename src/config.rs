@@ -49,34 +49,34 @@ explorer_tx_url = "https://sepolia.etherscan.io/tx/"
 [chains.base]
 family = "evm"
 [chains.base.networks.mainnet]
-rpc_url = "https://mainnet.base.org"
+rpc_url = "https://base-rpc.publicnode.com"
 chain_id = 8453
 explorer_tx_url = "https://basescan.org/tx/"
 [chains.base.networks.testnet]
-rpc_url = "https://sepolia.base.org"
+rpc_url = "https://base-sepolia-rpc.publicnode.com"
 chain_id = 84532
 explorer_tx_url = "https://sepolia.basescan.org/tx/"
 
 [chains.arb]
 family = "evm"
 [chains.arb.networks.mainnet]
-rpc_url = "https://arb1.arbitrum.io/rpc"
+rpc_url = "https://arbitrum-one-rpc.publicnode.com"
 chain_id = 42161
 explorer_tx_url = "https://arbiscan.io/tx/"
 [chains.arb.networks.testnet]
-rpc_url = "https://sepolia-rollup.arbitrum.io/rpc"
+rpc_url = "https://arbitrum-sepolia-rpc.publicnode.com"
 chain_id = 421614
 explorer_tx_url = "https://sepolia.arbiscan.io/tx/"
 
 [chains.bnb]
 family = "evm"
 [chains.bnb.networks.mainnet]
-rpc_url = "https://bsc-dataseed.bnbchain.org"
+rpc_url = "https://bsc-rpc.publicnode.com"
 chain_id = 56
 explorer_tx_url = "https://bscscan.com/tx/"
 symbol = "BNB"
 [chains.bnb.networks.testnet]
-rpc_url = "https://bsc-testnet-dataseed.bnbchain.org"
+rpc_url = "https://bsc-testnet-rpc.publicnode.com"
 chain_id = 97
 explorer_tx_url = "https://testnet.bscscan.com/tx/"
 symbol = "BNB"
@@ -84,12 +84,12 @@ symbol = "BNB"
 [chains.pol]
 family = "evm"
 [chains.pol.networks.mainnet]
-rpc_url = "https://polygon-rpc.com"
+rpc_url = "https://polygon-bor-rpc.publicnode.com"
 chain_id = 137
 explorer_tx_url = "https://polygonscan.com/tx/"
 symbol = "POL"
 [chains.pol.networks.testnet]
-rpc_url = "https://rpc-amoy.polygon.technology"
+rpc_url = "https://polygon-amoy-bor-rpc.publicnode.com"
 chain_id = 80002
 explorer_tx_url = "https://amoy.polygonscan.com/tx/"
 symbol = "POL"
@@ -147,7 +147,7 @@ decimals = 9
 [chains.solana]
 family = "svm"
 [chains.solana.networks.mainnet]
-rpc_url = "https://api.mainnet-beta.solana.com"
+rpc_url = "https://solana-rpc.publicnode.com"
 explorer_tx_url = "https://solscan.io/tx/"
 symbol = "SOL"
 decimals = 9

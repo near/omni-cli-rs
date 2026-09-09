@@ -350,6 +350,23 @@ impl ChainAdapter for UtxoAdapter {
     }
 }
 
+/// Recomputes the per-input MPC signing payloads from an envelope's
+/// unsigned tx - the byte-equality half of `proposal review`.
+pub(crate) fn signing_payloads_from_envelope(
+    unsigned_tx: &serde_json::Value,
+) -> color_eyre::eyre::Result<Vec<Vec<u8>>> {
+    let payload: UtxoUnsignedPayload = serde_json::from_value(unsigned_tx.clone())
+        .wrap_err("Failed to deserialize the unsigned Bitcoin transaction")?;
+    let tx = BitcoinTransaction::try_from(&payload.tx)?;
+    let mut public_key = [0u8; 33];
+    hex::decode_to_slice(&payload.sender_public_key, &mut public_key)
+        .wrap_err("Invalid sender public key in the envelope")?;
+    Ok(input_sighashes(&tx, &payload.input_values, &public_key)
+        .into_iter()
+        .map(|digest| digest.to_vec())
+        .collect())
+}
+
 /// Combines the unsigned Bitcoin transaction with the MPC signatures (one per
 /// input, matched by verification since receipt order is not guaranteed) and
 /// broadcasts it; returns the txid.

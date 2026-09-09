@@ -189,6 +189,18 @@ impl ChainAdapter for AptosAdapter {
     }
 }
 
+/// Recomputes the MPC signing payload from an envelope's unsigned tx -
+/// the byte-equality half of `proposal review`.
+pub(crate) fn signing_payloads_from_envelope(
+    unsigned_tx: &serde_json::Value,
+) -> color_eyre::eyre::Result<Vec<Vec<u8>>> {
+    let mut unsigned_tx = unsigned_tx.clone();
+    unprettify_entry_function_args(&mut unsigned_tx)?;
+    let payload: AptosUnsignedPayload = serde_json::from_value(unsigned_tx)
+        .wrap_err("Failed to deserialize the unsigned Aptos transaction")?;
+    Ok(vec![payload.tx.build_for_signing()])
+}
+
 /// Combines the unsigned Aptos transaction with the MPC signature and
 /// broadcasts it; returns the transaction hash.
 pub fn assemble_and_broadcast(

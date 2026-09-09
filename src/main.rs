@@ -44,6 +44,11 @@ pub enum Command {
     ))]
     /// Construct, sign with MPC, and broadcast transactions on other chains
     Transaction(self::commands::transaction::TransactionCommands),
+    #[strum_discriminants(strum(
+        message = "proposal    -   List, review (verify!), and vote on DAO chain-signature proposals"
+    ))]
+    /// List, review (verify!), and vote on DAO chain-signature proposals
+    Proposal(self::commands::proposal::Proposal),
 }
 
 fn main() -> CliResult {

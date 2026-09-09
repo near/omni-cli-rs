@@ -163,6 +163,14 @@ impl TryFrom<&EvmTxJson> for EVMTransaction {
     }
 }
 
+/// Recomputes the MPC signing payloads from an envelope's unsigned tx -
+/// the byte-equality half of `proposal review`.
+pub(crate) fn signing_payloads_from_envelope(
+    unsigned_tx: &serde_json::Value,
+) -> color_eyre::eyre::Result<Vec<Vec<u8>>> {
+    Ok(vec![sighash(&evm_tx_from_envelope(unsigned_tx)?).to_vec()])
+}
+
 /// Parses the envelope's unsigned transaction: the friendly [`EvmTxJson`]
 /// form, or the raw serde form written by older CLI versions.
 fn evm_tx_from_envelope(value: &serde_json::Value) -> color_eyre::eyre::Result<EVMTransaction> {

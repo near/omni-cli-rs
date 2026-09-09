@@ -89,3 +89,115 @@ pub fn proposal_id_from_outcome(
         _ => None,
     }
 }
+
+/// The next proposal id (== total number of proposals so far).
+pub fn fetch_last_proposal_id(
+    network: &near_api::NetworkConfig,
+    dao_account_id: &near_primitives::types::AccountId,
+) -> color_eyre::eyre::Result<u64> {
+    let contract = near_api::Contract(
+        dao_account_id
+            .as_str()
+            .parse()
+            .wrap_err("Invalid DAO account id")?,
+    );
+    Ok(crate::mpc::block_on(
+        contract
+            .call_function("get_last_proposal_id", serde_json::json!({}))
+            .read_only::<u64>()
+            .fetch_from(network),
+    )?
+    .wrap_err_with(|| format!("Failed to fetch the proposal count from {dao_account_id}"))?
+    .data)
+}
+
+pub fn fetch_proposals(
+    network: &near_api::NetworkConfig,
+    dao_account_id: &near_primitives::types::AccountId,
+    from_index: u64,
+    limit: u64,
+) -> color_eyre::eyre::Result<Vec<serde_json::Value>> {
+    let contract = near_api::Contract(
+        dao_account_id
+            .as_str()
+            .parse()
+            .wrap_err("Invalid DAO account id")?,
+    );
+    Ok(crate::mpc::block_on(
+        contract
+            .call_function(
+                "get_proposals",
+                serde_json::json!({ "from_index": from_index, "limit": limit }),
+            )
+            .read_only::<Vec<serde_json::Value>>()
+            .fetch_from(network),
+    )?
+    .wrap_err_with(|| format!("Failed to fetch proposals from {dao_account_id}"))?
+    .data)
+}
+
+pub fn fetch_proposal(
+    network: &near_api::NetworkConfig,
+    dao_account_id: &near_primitives::types::AccountId,
+    proposal_id: u64,
+) -> color_eyre::eyre::Result<serde_json::Value> {
+    let contract = near_api::Contract(
+        dao_account_id
+            .as_str()
+            .parse()
+            .wrap_err("Invalid DAO account id")?,
+    );
+    Ok(crate::mpc::block_on(
+        contract
+            .call_function("get_proposal", serde_json::json!({ "id": proposal_id }))
+            .read_only::<serde_json::Value>()
+            .fetch_from(network),
+    )?
+    .wrap_err_with(|| format!("Failed to fetch proposal #{proposal_id} from {dao_account_id}"))?
+    .data)
+}
+
+/// The `act_proposal` FunctionCall action for voting. Full gas: the deciding
+/// vote executes the proposal (the MPC sign calls) in the same transaction.
+/// Newer SputnikDAO versions require the proposal kind to be passed back and
+/// assert it matches the stored one (ERR_WRONG_KIND); older versions ignore
+/// the extra field.
+pub fn act_proposal_action(
+    proposal_id: u64,
+    vote_action: &str,
+    proposal_kind: &serde_json::Value,
+) -> near_primitives::transaction::Action {
+    near_primitives::transaction::Action::FunctionCall(Box::new(
+        near_primitives::transaction::FunctionCallAction {
+            method_name: "act_proposal".to_string(),
+            args: serde_json::json!({
+                "id": proposal_id,
+                "action": vote_action,
+                "proposal": proposal_kind,
+            })
+            .to_string()
+            .into_bytes(),
+            gas: near_primitives::gas::Gas::from_gas(near_gas::NearGas::from_tgas(300).as_gas()),
+            deposit: near_token::NearToken::from_yoctonear(0),
+        },
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn act_proposal_args_carry_the_proposal_kind() {
+        let kind = serde_json::json!({
+            "FunctionCall": { "receiver_id": "v1.signer", "actions": [] }
+        });
+        let near_primitives::transaction::Action::FunctionCall(call) =
+            super::act_proposal_action(4, "VoteApprove", &kind)
+        else {
+            panic!("expected a FunctionCall action");
+        };
+        let args: serde_json::Value = serde_json::from_slice(&call.args).unwrap();
+        assert_eq!(args["id"], 4);
+        assert_eq!(args["action"], "VoteApprove");
+        assert_eq!(args["proposal"], kind);
+    }
+}

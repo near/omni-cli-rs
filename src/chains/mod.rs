@@ -124,6 +124,32 @@ pub fn assemble_and_broadcast(
     }
 }
 
+/// The MPC key domain a family's payloads are signed with.
+pub fn family_scheme(family: &str) -> color_eyre::eyre::Result<SignatureScheme> {
+    match family {
+        evm::FAMILY | utxo::FAMILY => Ok(SignatureScheme::Secp256k1),
+        svm::FAMILY | aptos::FAMILY | sui::FAMILY | ton::FAMILY => Ok(SignatureScheme::Ed25519),
+        other => Err(color_eyre::eyre::eyre!("Unknown chain family '{other}'")),
+    }
+}
+
+/// Recomputes the MPC signing payloads from an envelope's unsigned tx,
+/// dispatched by family - the byte-equality half of `proposal review`.
+pub fn signing_payloads_from_envelope(
+    family: &str,
+    unsigned_tx: &serde_json::Value,
+) -> color_eyre::eyre::Result<Vec<Vec<u8>>> {
+    match family {
+        evm::FAMILY => evm::signing_payloads_from_envelope(unsigned_tx),
+        svm::FAMILY => svm::signing_payloads_from_envelope(unsigned_tx),
+        aptos::FAMILY => aptos::signing_payloads_from_envelope(unsigned_tx),
+        sui::FAMILY => sui::signing_payloads_from_envelope(unsigned_tx),
+        utxo::FAMILY => utxo::signing_payloads_from_envelope(unsigned_tx),
+        ton::FAMILY => ton::signing_payloads_from_envelope(unsigned_tx),
+        other => Err(color_eyre::eyre::eyre!("Unknown chain family '{other}'")),
+    }
+}
+
 /// The chain-native derived address, from the MPC-derived keys of both
 /// domains (families pick the one they need).
 pub fn derived_address_for_chain(

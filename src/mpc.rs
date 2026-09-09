@@ -133,6 +133,40 @@ pub fn ed25519_bytes(public_key: &near_crypto::PublicKey) -> color_eyre::eyre::R
     }
 }
 
+/// The MPC-derived keys of both domains for `(owner, path)` - enough to
+/// compute the derived address on every registered chain.
+pub struct DerivedKeys {
+    pub secp256k1: [u8; 64],
+    pub ed25519: [u8; 32],
+}
+
+pub fn fetch_derived_keys(
+    network_config: &near_cli_rs::config::NetworkConfig,
+    mpc_config: &crate::config::MpcConfig,
+    owner: &near_primitives::types::AccountId,
+    path: &str,
+) -> color_eyre::eyre::Result<DerivedKeys> {
+    let mpc_contract = mpc_contract_id(mpc_config, network_config)?;
+    let api_network = to_near_api_network(network_config)?;
+    eprintln!("\nResolving the derived keys for {owner} / \"{path}\" via {mpc_contract} ...");
+
+    let secp256k1 = secp256k1_bytes(&derived_public_key(
+        &api_network,
+        &mpc_contract,
+        owner,
+        path,
+        domain_id(mpc_config, crate::chains::SignatureScheme::Secp256k1),
+    )?)?;
+    let ed25519 = ed25519_bytes(&derived_public_key(
+        &api_network,
+        &mpc_contract,
+        owner,
+        path,
+        domain_id(mpc_config, crate::chains::SignatureScheme::Ed25519),
+    )?)?;
+    Ok(DerivedKeys { secp256k1, ed25519 })
+}
+
 /// JSON arguments for the MPC contract's `sign` method (v2 interface).
 pub fn sign_request_args(
     payload: &[u8],

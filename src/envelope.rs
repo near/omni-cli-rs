@@ -67,7 +67,6 @@ pub fn encode_description(envelope: &Envelope) -> color_eyre::eyre::Result<Strin
     Ok(description)
 }
 
-#[allow(dead_code)] // used by the upcoming `omni proposal review` and `omni broadcast` commands
 pub fn decode_description(description: &str) -> Option<Envelope> {
     serde_json::from_str(description.trim()).ok()
 }

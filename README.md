@@ -46,8 +46,12 @@ The `construct` command with both execution routes, built on a family-generic
       direct-route broadcast (`--unsigned-tx` envelope blob)
 - [x] `account show / balance` — derived addresses across all registered
       chains, and native balances per chain
+- [x] `proposal list / review / vote` — `review` recomputes the signing
+      payloads from the envelope and byte-compares them against the
+      proposal's `sign` args (plus receiver/path/domain checks) before
+      suggesting a vote; the deciding vote prints the ready-made
+      `transaction broadcast` command
 - [ ] Zcash (transparent) — needs an indexer choice; the builders exist
-- [ ] `proposal list / review / vote`
 
 ## Usage
 

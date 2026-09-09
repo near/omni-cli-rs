@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use color_eyre::eyre::{ContextCompat, WrapErr};
 use strum::{EnumDiscriminants, EnumIter, EnumMessage};
 
-use crate::chains::SignatureScheme;
 use crate::config::ResolvedChain;
+use crate::mpc::fetch_derived_keys;
 
 #[derive(Debug, Clone, interactive_clap::InteractiveClap)]
 #[interactive_clap(context = near_cli_rs::GlobalContext)]
@@ -31,40 +31,6 @@ pub enum AccountActions {
     ))]
     /// Native balance of the derived address on one chain
     Balance(Balance),
-}
-
-/// The MPC-derived keys of both domains for `(owner, path)` - enough to
-/// compute the derived address on every registered chain.
-struct DerivedKeys {
-    secp256k1: [u8; 64],
-    ed25519: [u8; 32],
-}
-
-fn fetch_derived_keys(
-    network_config: &near_cli_rs::config::NetworkConfig,
-    mpc_config: &crate::config::MpcConfig,
-    owner: &near_primitives::types::AccountId,
-    path: &str,
-) -> color_eyre::eyre::Result<DerivedKeys> {
-    let mpc_contract = crate::mpc::mpc_contract_id(mpc_config, network_config)?;
-    let api_network = crate::mpc::to_near_api_network(network_config)?;
-    eprintln!("\nResolving the derived keys for {owner} / \"{path}\" via {mpc_contract} ...");
-
-    let secp256k1 = crate::mpc::secp256k1_bytes(&crate::mpc::derived_public_key(
-        &api_network,
-        &mpc_contract,
-        owner,
-        path,
-        crate::mpc::domain_id(mpc_config, SignatureScheme::Secp256k1),
-    )?)?;
-    let ed25519 = crate::mpc::ed25519_bytes(&crate::mpc::derived_public_key(
-        &api_network,
-        &mpc_contract,
-        owner,
-        path,
-        crate::mpc::domain_id(mpc_config, SignatureScheme::Ed25519),
-    )?)?;
-    Ok(DerivedKeys { secp256k1, ed25519 })
 }
 
 /// The registry's chains resolved for the selected NEAR network, keyed by
