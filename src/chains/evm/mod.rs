@@ -80,7 +80,7 @@ impl ChainAdapter for EvmAdapter {
             &self.spec,
         );
         Ok(BuiltTransaction {
-            unsigned_tx: serde_json::to_value(&tx)?,
+            unsigned_tx: serde_json::to_value(EvmTxJson::from(&tx))?,
             payloads: vec![payload.to_vec()],
             display,
         })
@@ -94,14 +94,83 @@ pub fn assemble_and_broadcast(
     unsigned_tx: &serde_json::Value,
     signatures: &[MpcSignatureResponse],
 ) -> color_eyre::eyre::Result<String> {
-    let tx: EVMTransaction = serde_json::from_value(unsigned_tx.clone())
-        .wrap_err("Failed to deserialize the unsigned EVM transaction")?;
+    let tx = evm_tx_from_envelope(unsigned_tx)?;
     let response = signatures
         .first()
         .wrap_err("No MPC signature available to assemble")?;
     let signature = signature_from_mpc(response)?;
     let raw_tx = tx.build_with_signature(&signature);
     rpc::send_raw_transaction(&chain.rpc_url, &raw_tx)
+}
+
+/// Reviewer-friendly JSON form of the unsigned transaction, as stored in the
+/// proposal envelope: hex address/calldata, decimal-string amounts (a u128
+/// does not fit a JSON number).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct EvmTxJson {
+    pub chain_id: u64,
+    pub nonce: u64,
+    pub to: String,
+    pub value: String,
+    pub input: String,
+    pub gas_limit: String,
+    pub max_fee_per_gas: String,
+    pub max_priority_fee_per_gas: String,
+}
+
+impl From<&EVMTransaction> for EvmTxJson {
+    fn from(tx: &EVMTransaction) -> Self {
+        Self {
+            chain_id: tx.chain_id,
+            nonce: tx.nonce,
+            to: tx.to.map_or_else(String::new, checksum),
+            value: tx.value.to_string(),
+            input: format!("0x{}", hex::encode(&tx.input)),
+            gas_limit: tx.gas_limit.to_string(),
+            max_fee_per_gas: tx.max_fee_per_gas.to_string(),
+            max_priority_fee_per_gas: tx.max_priority_fee_per_gas.to_string(),
+        }
+    }
+}
+
+impl TryFrom<&EvmTxJson> for EVMTransaction {
+    type Error = color_eyre::eyre::Error;
+
+    fn try_from(json: &EvmTxJson) -> color_eyre::eyre::Result<Self> {
+        use std::str::FromStr;
+
+        let to = crate::types::eth_address::EthAddress::from_str(&json.to)
+            .map_err(|err| eyre!("Invalid `to` in the envelope: {err}"))?;
+        let input = hex::decode(json.input.strip_prefix("0x").unwrap_or(&json.input))
+            .wrap_err("Invalid `input` hex in the envelope")?;
+        Ok(Self {
+            chain_id: json.chain_id,
+            nonce: json.nonce,
+            to: Some(to.as_bytes()),
+            value: json.value.parse().wrap_err("Invalid `value`")?,
+            input,
+            gas_limit: json.gas_limit.parse().wrap_err("Invalid `gas_limit`")?,
+            max_fee_per_gas: json
+                .max_fee_per_gas
+                .parse()
+                .wrap_err("Invalid `max_fee_per_gas`")?,
+            max_priority_fee_per_gas: json
+                .max_priority_fee_per_gas
+                .parse()
+                .wrap_err("Invalid `max_priority_fee_per_gas`")?,
+            access_list: vec![],
+        })
+    }
+}
+
+/// Parses the envelope's unsigned transaction: the friendly [`EvmTxJson`]
+/// form, or the raw serde form written by older CLI versions.
+fn evm_tx_from_envelope(value: &serde_json::Value) -> color_eyre::eyre::Result<EVMTransaction> {
+    if let Ok(json) = serde_json::from_value::<EvmTxJson>(value.clone()) {
+        return EVMTransaction::try_from(&json);
+    }
+    serde_json::from_value(value.clone())
+        .wrap_err("Failed to deserialize the unsigned EVM transaction")
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -396,6 +465,44 @@ mod tests {
         let raw_tx = tx.build_with_signature(&omni_signature);
         assert_eq!(raw_tx[0], 0x02); // EIP-1559 type byte
         assert!(raw_tx.len() > tx.build_for_signing().len());
+    }
+
+    /// The envelope form must be readable (hex address/calldata, string
+    /// amounts), survive values above u64::MAX, round-trip exactly, and the
+    /// legacy raw serde form must still decode.
+    #[test]
+    fn envelope_json_is_readable_and_round_trips() {
+        let spec = EvmActionSpec {
+            to: [0xde; 20],
+            value_wei: u128::from(u64::MAX) + 1, // > u64: breaks JSON numbers
+            data: vec![0xa9, 0x05, 0x9c, 0xbb],
+            summary: "test".to_string(),
+        };
+        let params = EvmTxParams {
+            nonce: 7,
+            gas_limit: 50_000,
+            max_fee_per_gas: 20_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+        };
+        let tx = build_unsigned(1, &spec, &params);
+
+        let value = serde_json::to_value(EvmTxJson::from(&tx)).unwrap();
+        assert_eq!(value["to"], checksum([0xde; 20]));
+        assert_eq!(value["input"], "0xa9059cbb");
+        assert_eq!(value["value"], "18446744073709551616");
+
+        let restored = evm_tx_from_envelope(&value).unwrap();
+        assert_eq!(restored.build_for_signing(), tx.build_for_signing());
+
+        // Legacy envelopes (raw serde form with byte arrays) still decode
+        let legacy = serde_json::json!({
+            "chain_id": 1, "nonce": 7,
+            "to": tx.to.unwrap().to_vec(),
+            "value": "1", "input": [1, 2, 3],
+            "gas_limit": "21000", "max_fee_per_gas": "1", "max_priority_fee_per_gas": "1",
+            "access_list": [],
+        });
+        assert_eq!(evm_tx_from_envelope(&legacy).unwrap().input, vec![1, 2, 3]);
     }
 
     /// Serves canned JSON-RPC responses on localhost and checks nonce, fee

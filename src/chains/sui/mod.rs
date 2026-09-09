@@ -169,11 +169,14 @@ impl ChainAdapter for SuiAdapter {
             digest = tx.digest_base58(),
         );
 
+        let mut unsigned_tx = serde_json::to_value(SuiUnsignedPayload {
+            tx,
+            sender_public_key: hex::encode(pk),
+        })?;
+        prettify_pure_call_args(&mut unsigned_tx);
+
         Ok(BuiltTransaction {
-            unsigned_tx: serde_json::to_value(SuiUnsignedPayload {
-                tx,
-                sender_public_key: hex::encode(pk),
-            })?,
+            unsigned_tx,
             payloads: vec![signing_digest],
             display,
         })
@@ -189,7 +192,9 @@ pub fn assemble_and_broadcast(
 ) -> color_eyre::eyre::Result<String> {
     use base64::Engine;
 
-    let payload: SuiUnsignedPayload = serde_json::from_value(unsigned_tx.clone())
+    let mut unsigned_tx = unsigned_tx.clone();
+    unprettify_pure_call_args(&mut unsigned_tx)?;
+    let payload: SuiUnsignedPayload = serde_json::from_value(unsigned_tx)
         .wrap_err("Failed to deserialize the unsigned Sui transaction")?;
     let response = signatures
         .first()
@@ -202,6 +207,36 @@ pub fn assemble_and_broadcast(
         &engine.encode(payload.tx.tx_bytes()),
         &engine.encode(signature.to_bytes()),
     )
+}
+
+/// Envelope prettification: `Pure` call args are BCS byte blobs that the
+/// upstream serde emits as number arrays; show them as hex (a transfer's
+/// second input is the recipient address).
+fn prettify_pure_call_args(unsigned_tx: &mut serde_json::Value) {
+    if let Some(inputs) = unsigned_tx
+        .pointer_mut("/tx/kind/ProgrammableTransaction/inputs")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for input in inputs {
+            if let Some(pure) = input.get_mut("Pure") {
+                crate::chains::bytes_array_to_hex(pure);
+            }
+        }
+    }
+}
+
+fn unprettify_pure_call_args(unsigned_tx: &mut serde_json::Value) -> color_eyre::eyre::Result<()> {
+    if let Some(inputs) = unsigned_tx
+        .pointer_mut("/tx/kind/ProgrammableTransaction/inputs")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for input in inputs {
+            if let Some(pure) = input.get_mut("Pure") {
+                crate::chains::hex_to_bytes_array(pure)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn ed25519_signature_from_mpc(
@@ -303,5 +338,49 @@ mod tests {
         assert_eq!(bytes[0], 0x00); // ed25519 flag
         assert_eq!(&bytes[1..65], signature.to_bytes().as_slice());
         assert_eq!(&bytes[65..], pk.as_slice());
+    }
+
+    /// The envelope form shows pure call args as hex and round-trips exactly.
+    #[test]
+    fn envelope_pure_args_prettify_and_round_trip() {
+        let sender = SuiAddress([1u8; 32]);
+        let tx = SuiTransaction {
+            kind: TransactionKind::ProgrammableTransaction(ProgrammableTransaction {
+                inputs: vec![
+                    CallArg::pure_u64(1_000_000),
+                    CallArg::pure_address(SuiAddress([9u8; 32])),
+                ],
+                commands: vec![Command::SplitCoins {
+                    coin: Argument::GasCoin,
+                    amounts: vec![Argument::Input(0)],
+                }],
+            }),
+            sender,
+            gas_data: GasData {
+                payment: vec![ObjectRef::new(
+                    SuiAddress([2u8; 32]),
+                    3,
+                    ObjectDigest::new([0x63u8; 32]),
+                )],
+                owner: sender,
+                price: 1000,
+                budget: GAS_BUDGET_MIST,
+            },
+            expiration: TransactionExpiration::None,
+        };
+        let expected_digest = tx.build_for_signing();
+
+        let mut unsigned_tx = serde_json::to_value(SuiUnsignedPayload {
+            tx,
+            sender_public_key: "00".repeat(32),
+        })
+        .unwrap();
+        prettify_pure_call_args(&mut unsigned_tx);
+        let inputs = &unsigned_tx["tx"]["kind"]["ProgrammableTransaction"]["inputs"];
+        assert_eq!(inputs[1]["Pure"], format!("0x{}", "09".repeat(32)));
+
+        unprettify_pure_call_args(&mut unsigned_tx).unwrap();
+        let restored: SuiUnsignedPayload = serde_json::from_value(unsigned_tx).unwrap();
+        assert_eq!(restored.tx.build_for_signing(), expected_digest);
     }
 }

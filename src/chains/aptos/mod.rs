@@ -175,11 +175,14 @@ impl ChainAdapter for AptosAdapter {
             payload_len = signing_payload.len(),
         );
 
+        let mut unsigned_tx = serde_json::to_value(AptosUnsignedPayload {
+            tx,
+            sender_public_key: hex::encode(pk),
+        })?;
+        prettify_entry_function_args(&mut unsigned_tx);
+
         Ok(BuiltTransaction {
-            unsigned_tx: serde_json::to_value(AptosUnsignedPayload {
-                tx,
-                sender_public_key: hex::encode(pk),
-            })?,
+            unsigned_tx,
             payloads: vec![signing_payload],
             display,
         })
@@ -193,7 +196,9 @@ pub fn assemble_and_broadcast(
     unsigned_tx: &serde_json::Value,
     signatures: &[MpcSignatureResponse],
 ) -> color_eyre::eyre::Result<String> {
-    let payload: AptosUnsignedPayload = serde_json::from_value(unsigned_tx.clone())
+    let mut unsigned_tx = unsigned_tx.clone();
+    unprettify_entry_function_args(&mut unsigned_tx)?;
+    let payload: AptosUnsignedPayload = serde_json::from_value(unsigned_tx)
         .wrap_err("Failed to deserialize the unsigned Aptos transaction")?;
     let response = signatures
         .first()
@@ -203,6 +208,34 @@ pub fn assemble_and_broadcast(
         .map_err(|err| eyre!("Invalid sender public key in the envelope: {err:?}"))?;
     let signed_tx = payload.tx.build_with_signature(&public_key, &signature);
     rpc::submit_transaction(&chain.rpc_url, &signed_tx)
+}
+
+/// Envelope prettification: entry-function args are BCS byte blobs that the
+/// upstream serde emits as number arrays; show them as hex (arg #0 of a
+/// transfer is the recipient address).
+fn prettify_entry_function_args(unsigned_tx: &mut serde_json::Value) {
+    if let Some(args) = unsigned_tx
+        .pointer_mut("/tx/payload/EntryFunction/args")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for arg in args {
+            crate::chains::bytes_array_to_hex(arg);
+        }
+    }
+}
+
+fn unprettify_entry_function_args(
+    unsigned_tx: &mut serde_json::Value,
+) -> color_eyre::eyre::Result<()> {
+    if let Some(args) = unsigned_tx
+        .pointer_mut("/tx/payload/EntryFunction/args")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for arg in args {
+            crate::chains::hex_to_bytes_array(arg)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn ed25519_signature_from_mpc(
@@ -290,5 +323,41 @@ mod tests {
         assert_eq!(&signed_tx[raw_len + 2..raw_len + 34], pk.as_slice());
         assert_eq!(signed_tx[raw_len + 34], 0x40);
         assert_eq!(&signed_tx[raw_len + 35..], signature.to_bytes().as_slice());
+    }
+
+    /// The envelope form shows BCS args as hex and round-trips exactly.
+    #[test]
+    fn envelope_args_prettify_and_round_trip() {
+        let tx = AptosTransaction {
+            sender: AccountAddress::from_hex("0xa550c18").unwrap(),
+            sequence_number: 0,
+            payload: TransactionPayload::EntryFunction(EntryFunction::new(
+                ModuleId::new(
+                    AccountAddress::ONE,
+                    Identifier::new("aptos_account").unwrap(),
+                ),
+                Identifier::new("transfer").unwrap(),
+                vec![],
+                vec![vec![0xddu8; 32], 1_000u64.to_le_bytes().to_vec()],
+            )),
+            max_gas_amount: MAX_GAS_AMOUNT,
+            gas_unit_price: 100,
+            expiration_timestamp_secs: 1_800_000_000,
+            chain_id: 2,
+        };
+        let expected_payload = tx.build_for_signing();
+
+        let mut unsigned_tx = serde_json::to_value(AptosUnsignedPayload {
+            tx,
+            sender_public_key: "00".repeat(32),
+        })
+        .unwrap();
+        prettify_entry_function_args(&mut unsigned_tx);
+        let args = &unsigned_tx["tx"]["payload"]["EntryFunction"]["args"];
+        assert_eq!(args[0], format!("0x{}", "dd".repeat(32)));
+
+        unprettify_entry_function_args(&mut unsigned_tx).unwrap();
+        let restored: AptosUnsignedPayload = serde_json::from_value(unsigned_tx).unwrap();
+        assert_eq!(restored.tx.build_for_signing(), expected_payload);
     }
 }

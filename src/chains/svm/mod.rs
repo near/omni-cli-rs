@@ -340,8 +340,11 @@ impl ChainAdapter for SvmAdapter {
             payload_len = payload.len(),
         );
 
+        let mut unsigned_tx = serde_json::to_value(&tx)?;
+        prettify_instruction_data(&mut unsigned_tx);
+
         Ok(BuiltTransaction {
-            unsigned_tx: serde_json::to_value(&tx)?,
+            unsigned_tx,
             payloads: vec![payload],
             display,
         })
@@ -355,7 +358,9 @@ pub fn assemble_and_broadcast(
     unsigned_tx: &serde_json::Value,
     signatures: &[MpcSignatureResponse],
 ) -> color_eyre::eyre::Result<String> {
-    let tx: SolanaTransaction = serde_json::from_value(unsigned_tx.clone())
+    let mut unsigned_tx = unsigned_tx.clone();
+    unprettify_instruction_data(&mut unsigned_tx)?;
+    let tx: SolanaTransaction = serde_json::from_value(unsigned_tx)
         .wrap_err("Failed to deserialize the unsigned Solana transaction")?;
     let response = signatures
         .first()
@@ -367,6 +372,41 @@ pub fn assemble_and_broadcast(
         base64::engine::general_purpose::STANDARD.encode(&wire_bytes)
     };
     rpc::send_transaction(&chain.rpc_url, &tx_base64)
+}
+
+/// Envelope prettification: instruction data blobs are emitted as number
+/// arrays by the upstream serde; show them as hex.
+fn prettify_instruction_data(unsigned_tx: &mut serde_json::Value) {
+    for variant in ["Legacy", "V0"] {
+        if let Some(instructions) = unsigned_tx
+            .pointer_mut(&format!("/message/{variant}/instructions"))
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for instruction in instructions {
+                if let Some(data) = instruction.get_mut("data") {
+                    crate::chains::bytes_array_to_hex(data);
+                }
+            }
+        }
+    }
+}
+
+fn unprettify_instruction_data(
+    unsigned_tx: &mut serde_json::Value,
+) -> color_eyre::eyre::Result<()> {
+    for variant in ["Legacy", "V0"] {
+        if let Some(instructions) = unsigned_tx
+            .pointer_mut(&format!("/message/{variant}/instructions"))
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for instruction in instructions {
+                if let Some(data) = instruction.get_mut("data") {
+                    crate::chains::hex_to_bytes_array(data)?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn signature_from_mpc(
@@ -516,5 +556,30 @@ mod tests {
         let payload = tx.build_for_signing();
         assert!(!payload.is_empty());
         assert_eq!(tx.message.num_required_signatures(), 1);
+    }
+
+    /// The envelope form shows instruction data as hex and round-trips exactly.
+    #[test]
+    fn envelope_instruction_data_prettifies_and_round_trips() {
+        let payer = SolanaAddress([7u8; 32]);
+        let tx = SolanaTransactionBuilder::new()
+            .payer(payer)
+            .instructions(vec![utils::system_transfer(
+                payer,
+                SolanaAddress([9u8; 32]),
+                1_000_000,
+            )])
+            .recent_blockhash(Blockhash([3u8; 32]))
+            .build();
+        let expected_payload = tx.build_for_signing();
+
+        let mut unsigned_tx = serde_json::to_value(&tx).unwrap();
+        prettify_instruction_data(&mut unsigned_tx);
+        let data = &unsigned_tx["message"]["Legacy"]["instructions"][0]["data"];
+        assert_eq!(data, "0x0200000040420f0000000000");
+
+        unprettify_instruction_data(&mut unsigned_tx).unwrap();
+        let restored: SolanaTransaction = serde_json::from_value(unsigned_tx).unwrap();
+        assert_eq!(restored.build_for_signing(), expected_payload);
     }
 }

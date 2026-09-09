@@ -2,9 +2,9 @@
 //! that rides along in the SputnikDAO proposal description so reviewers can
 //! verify, byte for byte, what the MPC is being asked to sign.
 //!
-//! The description IS the envelope: pretty-printed JSON of the schema below,
-//! directly readable in any DAO UI and parseable by any tool - no wrapping,
-//! no base64.
+//! The description IS the envelope: compact single-line JSON of the schema
+//! below - parseable by any tool, and free of `\n`/indentation noise when
+//! viewed as a raw string in CLIs and DAO UIs.
 //!
 //! ```json
 //! {
@@ -56,7 +56,7 @@ const SIZE_WARNING_BYTES: usize = 16 * 1024;
 
 pub fn encode_description(envelope: &Envelope) -> color_eyre::eyre::Result<String> {
     let description =
-        serde_json::to_string_pretty(envelope).wrap_err("Failed to serialize the envelope")?;
+        serde_json::to_string(envelope).wrap_err("Failed to serialize the envelope")?;
     if description.len() > SIZE_WARNING_BYTES {
         eprintln!(
             "Warning: the proposal description is {} KB; it is stored in the DAO's state \
@@ -92,8 +92,9 @@ mod tests {
         };
         let description = encode_description(&envelope).unwrap();
 
-        // Plain pretty-printed JSON, human-relevant fields near the top
-        assert!(description.starts_with("{\n"));
+        // Compact single-line JSON, human-relevant fields near the top
+        assert!(description.starts_with('{'));
+        assert!(!description.contains('\n'));
         let omni_pos = description.find("\"omni\"").unwrap();
         let intent_pos = description.find("\"intent\"").unwrap();
         let tx_pos = description.find("\"unsigned_tx\"").unwrap();

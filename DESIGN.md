@@ -201,9 +201,9 @@ With `sign-as-dao` the render appears right after the fork; with
 
 A 32-byte sighash is unreviewable on its own, so the full unsigned transaction
 rides along in the SputnikDAO `description` field. The description IS the
-envelope: pretty-printed JSON, directly readable in any DAO UI and parseable
-by any tool - no wrapping, no base64. Human-relevant fields (version, intent,
-chain, path) come first:
+envelope: compact single-line JSON, parseable by any tool and free of
+`\n`/indentation noise when viewed as a raw string. Human-relevant fields
+(version, intent, chain, path) come first:
 
 ```json
 {

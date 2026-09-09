@@ -38,14 +38,114 @@ pub enum UtxoActionSpec {
     Transfer { to: String, sats: u64 },
 }
 
-/// What goes into the envelope: the transaction, the spent input values
-/// (needed to recompute the BIP143 sighashes at assembly time), and the
-/// sender's compressed public key (for the witnesses).
+/// What goes into the envelope: the transaction (reviewer-friendly form),
+/// the spent input values (needed to recompute the BIP143 sighashes at
+/// assembly time), and the sender's compressed public key (for the
+/// witnesses).
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct UtxoUnsignedPayload {
-    pub tx: BitcoinTransaction,
+    pub tx: UtxoTxJson,
     pub input_values: Vec<u64>,
     pub sender_public_key: String,
+}
+
+/// Reviewer-friendly JSON form of the unsigned transaction, as stored in the
+/// proposal envelope: display-order txid hex and script hex instead of the
+/// byte arrays the upstream serde emits.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct UtxoTxJson {
+    pub version: u8,
+    pub lock_time: u32,
+    pub inputs: Vec<UtxoTxInputJson>,
+    pub outputs: Vec<UtxoTxOutputJson>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct UtxoTxInputJson {
+    pub txid: String,
+    pub vout: u32,
+    pub sequence: u32,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct UtxoTxOutputJson {
+    pub value_sats: u64,
+    pub script_pubkey: String,
+}
+
+impl From<&BitcoinTransaction> for UtxoTxJson {
+    fn from(tx: &BitcoinTransaction) -> Self {
+        Self {
+            version: match tx.version {
+                Version::One => 1,
+                Version::Two => 2,
+            },
+            // Always built with lock_time 0 (the upstream field is private).
+            lock_time: 0,
+            inputs: tx
+                .input
+                .iter()
+                .map(|input| UtxoTxInputJson {
+                    txid: hex::encode(input.previous_output.txid.0.0),
+                    vout: input.previous_output.vout,
+                    sequence: input.sequence.0,
+                })
+                .collect(),
+            outputs: tx
+                .output
+                .iter()
+                .map(|output| UtxoTxOutputJson {
+                    value_sats: output.value.to_sat(),
+                    script_pubkey: format!("0x{}", hex::encode(&output.script_pubkey.0)),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl TryFrom<&UtxoTxJson> for BitcoinTransaction {
+    type Error = color_eyre::eyre::Error;
+
+    fn try_from(json: &UtxoTxJson) -> color_eyre::eyre::Result<Self> {
+        let version = match json.version {
+            1 => Version::One,
+            2 => Version::Two,
+            other => return Err(eyre!("Unsupported transaction version {other}")),
+        };
+        Ok(Self {
+            version,
+            lock_time: LockTime::from_height(json.lock_time).map_err(|err| eyre!("{err}"))?,
+            input: json
+                .inputs
+                .iter()
+                .map(|input| {
+                    Ok(TxIn {
+                        previous_output: OutPoint {
+                            txid: txid_from_display_hex(&input.txid)?,
+                            vout: input.vout,
+                        },
+                        script_sig: ScriptBuf::default(),
+                        sequence: Sequence(input.sequence),
+                        witness: Witness::default(),
+                    })
+                })
+                .collect::<color_eyre::eyre::Result<Vec<_>>>()?,
+            output: json
+                .outputs
+                .iter()
+                .map(|output| {
+                    let script = &output.script_pubkey;
+                    Ok(TxOut {
+                        value: Amount::from_sat(output.value_sats),
+                        script_pubkey: ScriptBuf(
+                            hex::decode(script.strip_prefix("0x").unwrap_or(script))
+                                .wrap_err("Invalid script_pubkey hex in the envelope")?,
+                        ),
+                    })
+                })
+                .collect::<color_eyre::eyre::Result<Vec<_>>>()?,
+        })
+    }
 }
 
 pub struct UtxoAdapter {
@@ -240,7 +340,7 @@ impl ChainAdapter for UtxoAdapter {
 
         Ok(BuiltTransaction {
             unsigned_tx: serde_json::to_value(UtxoUnsignedPayload {
-                tx,
+                tx: UtxoTxJson::from(&tx),
                 input_values,
                 sender_public_key: hex::encode(public_key),
             })?,
@@ -260,7 +360,7 @@ pub fn assemble_and_broadcast(
 ) -> color_eyre::eyre::Result<String> {
     let payload: UtxoUnsignedPayload = serde_json::from_value(unsigned_tx.clone())
         .wrap_err("Failed to deserialize the unsigned Bitcoin transaction")?;
-    let mut tx = payload.tx.clone();
+    let mut tx = BitcoinTransaction::try_from(&payload.tx)?;
 
     let mut public_key = [0u8; 33];
     hex::decode_to_slice(&payload.sender_public_key, &mut public_key)
@@ -268,7 +368,7 @@ pub fn assemble_and_broadcast(
     let verifying_key = k256::ecdsa::VerifyingKey::from_sec1_bytes(&public_key)
         .map_err(|err| eyre!("Invalid sender public key: {err}"))?;
 
-    let digests = input_sighashes(&payload.tx, &payload.input_values, &public_key);
+    let digests = input_sighashes(&tx, &payload.input_values, &public_key);
     if signatures.len() < digests.len() {
         return Err(eyre!(
             "This transaction spends {} input(s) but only {} MPC signature(s) were found.",
@@ -447,11 +547,19 @@ mod tests {
             .collect();
 
         let unsigned = serde_json::to_value(UtxoUnsignedPayload {
-            tx,
+            tx: UtxoTxJson::from(&tx),
             input_values,
             sender_public_key: hex::encode(public_key),
         })
         .unwrap();
+        // The envelope form is readable hex, not byte arrays
+        assert!(unsigned["tx"]["inputs"][0]["txid"].is_string());
+        assert!(
+            unsigned["tx"]["outputs"][0]["script_pubkey"]
+                .as_str()
+                .unwrap()
+                .starts_with("0x0014")
+        );
 
         // Broadcast fails (no server on port 1), but everything before it -
         // deserialization, signature matching, witness assembly - must succeed.

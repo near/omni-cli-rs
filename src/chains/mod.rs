@@ -7,6 +7,33 @@ pub mod utxo;
 
 use crate::config::ResolvedChain;
 
+/// Replaces a JSON byte array (numbers 0-255) with a `0x...` hex string -
+/// envelope prettification for fields the upstream serde emits as arrays.
+pub(crate) fn bytes_array_to_hex(value: &mut serde_json::Value) {
+    let Some(items) = value.as_array() else {
+        return;
+    };
+    let bytes: Option<Vec<u8>> = items
+        .iter()
+        .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
+        .collect();
+    if let Some(bytes) = bytes {
+        *value = serde_json::Value::String(format!("0x{}", hex::encode(bytes)));
+    }
+}
+
+/// Reverse of [`bytes_array_to_hex`]: turns a `0x...` string back into a byte
+/// array so the upstream serde can deserialize it. Non-strings are untouched
+/// (already in array form, e.g. an envelope from an older CLI).
+pub(crate) fn hex_to_bytes_array(value: &mut serde_json::Value) -> color_eyre::eyre::Result<()> {
+    if let Some(s) = value.as_str() {
+        let bytes = hex::decode(s.strip_prefix("0x").unwrap_or(s))
+            .map_err(|err| color_eyre::eyre::eyre!("Invalid hex in the envelope: {err}"))?;
+        *value = serde_json::Value::from(bytes);
+    }
+    Ok(())
+}
+
 /// How long the gap between building a payload and executing it can be.
 /// Chains punish that gap differently, so context fetching and validity
 /// choices depend on it (e.g. fee ceilings on EVM, durable nonces on SVM).
