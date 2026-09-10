@@ -100,6 +100,8 @@ pub fn select_or_manual(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]
