@@ -49,6 +49,16 @@ pub enum Command {
     ))]
     /// List, review (verify!), and vote on DAO chain-signature proposals
     Proposal(self::commands::proposal::Proposal),
+    #[strum_discriminants(strum(
+        message = "config      -   Manage the omni chain registry (add chains, sync defaults, reset)"
+    ))]
+    /// Manage the omni chain registry (add chains, sync defaults, reset)
+    Config(self::commands::config::Config),
+    #[strum_discriminants(strum(
+        message = "self-update -   Update omni to the latest GitHub release"
+    ))]
+    /// Update omni to the latest GitHub release
+    SelfUpdate(self::commands::self_update::SelfUpdate),
 }
 
 fn main() -> CliResult {

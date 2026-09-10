@@ -329,14 +329,7 @@ impl ChainDef {
                 self.networks.keys().cloned().collect::<Vec<_>>().join(", ")
             )
         })?;
-        let (default_symbol, default_decimals) = match self.family.as_str() {
-            "svm" => ("SOL", 9),
-            "aptos" => ("APT", 8),
-            "sui" => ("SUI", 9),
-            "utxo" => ("BTC", 8),
-            "ton" => ("TON", 9),
-            _ => ("ETH", 18),
-        };
+        let (default_symbol, default_decimals) = family_defaults(&self.family);
         Ok(ResolvedChain {
             chain_key: chain_key.to_string(),
             family: self.family.clone(),
@@ -353,6 +346,19 @@ impl ChainDef {
     }
 }
 
+/// Fallback native-token symbol and decimals per chain family, used when a
+/// network variant does not set them explicitly.
+pub fn family_defaults(family: &str) -> (&'static str, u8) {
+    match family {
+        "svm" => ("SOL", 9),
+        "aptos" => ("APT", 8),
+        "sui" => ("SUI", 9),
+        "utxo" => ("BTC", 8),
+        "ton" => ("TON", 9),
+        _ => ("ETH", 18),
+    }
+}
+
 impl ResolvedChain {
     pub fn explorer_link(&self, tx_hash: &str) -> Option<String> {
         self.explorer_tx_url.as_ref().map(|template| {
@@ -365,14 +371,56 @@ impl ResolvedChain {
     }
 }
 
-/// Loads the omni chain registry, creating a default one next to the
-/// near-cli-rs config.toml on first run.
-pub fn load_or_init() -> color_eyre::eyre::Result<OmniConfig> {
+/// Where the omni chain registry lives: next to the near-cli-rs config.toml.
+pub fn config_path() -> color_eyre::eyre::Result<std::path::PathBuf> {
     let mut path = dirs::config_dir().wrap_err("Impossible to get your config dir!")?;
     path.push("near-cli");
     std::fs::create_dir_all(&path)
         .wrap_err_with(|| format!("Failed to create config directory: {}", path.display()))?;
     path.push(CONFIG_FILE_NAME);
+    Ok(path)
+}
+
+/// The built-in default registry (what a first run writes to disk).
+pub fn default_config() -> OmniConfig {
+    toml::from_str(DEFAULT_CONFIG_TOML).expect("the built-in default config is valid TOML")
+}
+
+/// Backs up the current config file (if any) to `<name>.bak`; returns the
+/// backup path when one was made.
+pub fn backup_config_file() -> color_eyre::eyre::Result<Option<std::path::PathBuf>> {
+    let path = config_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let backup = path.with_extension("toml.bak");
+    std::fs::copy(&path, &backup)
+        .wrap_err_with(|| format!("Failed to back up the config to {}", backup.display()))?;
+    Ok(Some(backup))
+}
+
+/// Serializes and writes the registry (used by `omni config` edits). Comments
+/// in the file are lost - `backup_config_file` first keeps them recoverable.
+pub fn save(config: &OmniConfig) -> color_eyre::eyre::Result<std::path::PathBuf> {
+    let path = config_path()?;
+    let content = toml::to_string_pretty(config).wrap_err("Failed to serialize the omni config")?;
+    std::fs::write(&path, content)
+        .wrap_err_with(|| format!("Failed to write the config: {}", path.display()))?;
+    Ok(path)
+}
+
+/// Restores the built-in default registry verbatim (comments included).
+pub fn write_default_config_file() -> color_eyre::eyre::Result<std::path::PathBuf> {
+    let path = config_path()?;
+    std::fs::write(&path, DEFAULT_CONFIG_TOML)
+        .wrap_err_with(|| format!("Failed to write the default config: {}", path.display()))?;
+    Ok(path)
+}
+
+/// Loads the omni chain registry, creating a default one next to the
+/// near-cli-rs config.toml on first run.
+pub fn load_or_init() -> color_eyre::eyre::Result<OmniConfig> {
+    let path = config_path()?;
 
     if !path.exists() {
         std::fs::write(&path, DEFAULT_CONFIG_TOML)

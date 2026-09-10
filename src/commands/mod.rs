@@ -1,5 +1,7 @@
 pub mod account;
+pub mod config;
 pub mod proposal;
+pub mod self_update;
 pub mod transaction;
 
 /// The shared derivation-path prompt, pre-filled with the configurable

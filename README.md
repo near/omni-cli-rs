@@ -52,6 +52,12 @@ The `construct` command with both execution routes, built on a family-generic
       proposal's `sign` args (plus receiver/path/domain checks) before
       suggesting a vote; the deciding vote prints the ready-made
       `transaction broadcast` command
+- [x] `config show / add-chain / remove-chain / sync / reset` — manage the
+      chain registry without hand-editing TOML; `sync` pulls in default
+      chains a new CLI version ships without touching your entries, and
+      every write backs up the previous file to `omni-config.toml.bak`
+- [x] `self-update` — replace the running binary with the latest GitHub
+      release (top-level, unlike near-cli-rs)
 - [ ] Zcash (transparent) — needs an indexer choice; the builders exist
 
 ## Usage
@@ -110,9 +116,12 @@ chain_id = 84532
 explorer_tx_url = "https://sepolia.basescan.org/tx/"
 ```
 
-Adding one more chain is a config entry, not a new release. The same file
-also holds `default_derivation_path` (pre-filled in interactive prompts,
-`omni-1` out of the box) and the `[mpc]` signer settings.
+Adding one more chain is a config entry, not a new release — and `omni
+config add-chain` writes it for you. After upgrading the CLI, `omni config
+sync` adds newly shipped default chains without touching your own entries.
+The same file also holds `default_derivation_path` (pre-filled in
+interactive prompts, `omni-1` out of the box) and the `[mpc]` signer
+settings.
 
 ## Build
 
