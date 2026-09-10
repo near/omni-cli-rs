@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "omni is your human-friendly companion that helps to control accounts on other chains from NEAR (DAO + MPC chain signatures) from command line."
 license = "MIT OR Apache-2.0"
+homepage = "https://omni-cli-rs.github.io"
+repository = "https://github.com/near/omni-cli-rs"
 
 [[bin]]
 name = "omni"

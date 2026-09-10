@@ -3,6 +3,7 @@
 `omni` controls accounts on other chains from NEAR via a single NEAR DAO
 (SputnikDAO) or a plain NEAR account using
 [MPC chain signatures](https://docs.near.org/chain-abstraction/chain-signatures).
+Website: <https://omni-cli-rs.github.io>
 
 Instead of maintaining a separate multisig on every chain (Gnosis Safe, Squads,
 Petra Vault, xDAO, ...), one DAO on NEAR approves proposals that ask the MPC to
@@ -169,7 +170,6 @@ git tag v0.1.0 && git push origin v0.1.0
 
 After changing the dist config, regenerate the workflow with `dist init`.
 
-The landing page lives in `site/` (vanilla HTML/CSS/JS, same design system
-as [near.cli.rs](https://near.cli.rs)) and deploys to GitHub Pages via
-`.github/workflows/pages.yml`. Preview it locally with
-`python3 -m http.server -d site 8080`.
+The landing page, <https://omni-cli-rs.github.io>, is a separate repository:
+[omni-cli-rs/omni-cli-rs.github.io](https://github.com/omni-cli-rs/omni-cli-rs.github.io)
+(vanilla HTML/CSS/JS, same design system as [near.cli.rs](https://near.cli.rs)).
