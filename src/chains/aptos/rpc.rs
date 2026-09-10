@@ -54,6 +54,15 @@ struct SubmitResponse {
     hash: String,
 }
 
+/// One simulated transaction as the node reports it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Simulation {
+    #[serde(deserialize_with = "u64_from_number_or_string")]
+    pub gas_used: u64,
+    pub success: bool,
+    pub vm_status: String,
+}
+
 #[derive(Deserialize)]
 struct ErrorResponse {
     message: String,
@@ -109,6 +118,30 @@ impl Client {
             "/accounts/{address_hex}/balance/0x1::aptos_coin::AptosCoin"
         ))
         .map_or(0, |FlexU64(balance)| balance)
+    }
+
+    /// Simulates BCS `SignedTransaction` bytes (the signature is not
+    /// verified, so an all-zero one is fine): the gas it would use and
+    /// whether it would abort.
+    pub fn simulate(&self, signed_tx: &[u8]) -> color_eyre::eyre::Result<Simulation> {
+        let request = self
+            .rest
+            .post("/v1/transactions/simulate")
+            .header("Content-Type", "application/x.aptos.signed_transaction+bcs")
+            .body(signed_tx.to_vec());
+        let (status, body) = self.rest.send(request)?;
+        if !status.is_success() {
+            return Err(eyre!(
+                "Aptos simulation failed ({status}): {}",
+                error_message(&body)
+            ));
+        }
+        let results: Vec<Simulation> = serde_json::from_str(&body)
+            .wrap_err_with(|| format!("Unexpected Aptos simulation response: {body}"))?;
+        results
+            .into_iter()
+            .next()
+            .ok_or_else(|| eyre!("Aptos simulation returned no result"))
     }
 
     /// Broadcasts BCS `SignedTransaction` bytes; returns the transaction

@@ -32,6 +32,36 @@ struct ExecuteResponse {
     digest: String,
 }
 
+/// An object's current reference and ownership (`sui_getObject`).
+#[derive(Debug, Clone)]
+pub struct ObjectInfo {
+    pub version: u64,
+    pub digest_base58: String,
+    /// `Some(initial_shared_version)` for shared objects.
+    pub shared_initial_version: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct GetObjectResponse {
+    data: Option<ObjectData>,
+    error: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct ObjectData {
+    #[serde(deserialize_with = "u64_from_number_or_string")]
+    version: u64,
+    digest: String,
+    #[serde(default)]
+    owner: Option<serde_json::Value>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ObjectDataOptions {
+    show_owner: bool,
+}
+
 impl Client {
     pub fn new(rpc_url: &str) -> color_eyre::eyre::Result<Self> {
         Ok(Self {
@@ -51,6 +81,35 @@ impl Client {
             .rpc
             .call("suix_getCoins", (owner, "0x2::sui::SUI", (), 50))?;
         Ok(page.data)
+    }
+
+    /// Reference + ownership of an object, for passing it to a Move call.
+    pub fn get_object(&self, object_id_hex: &str) -> color_eyre::eyre::Result<ObjectInfo> {
+        let response: GetObjectResponse = self.rpc.call(
+            "sui_getObject",
+            (object_id_hex, ObjectDataOptions { show_owner: true }),
+        )?;
+        let data = response.data.ok_or_else(|| {
+            color_eyre::eyre::eyre!(
+                "Object {object_id_hex} not found: {}",
+                response.error.unwrap_or_default()
+            )
+        })?;
+        let shared_initial_version = data
+            .owner
+            .as_ref()
+            .and_then(|owner| owner.get("Shared"))
+            .and_then(|shared| shared.get("initial_shared_version"))
+            .and_then(|version| {
+                version
+                    .as_u64()
+                    .or_else(|| version.as_str().and_then(|text| text.parse().ok()))
+            });
+        Ok(ObjectInfo {
+            version: data.version,
+            digest_base58: data.digest,
+            shared_initial_version,
+        })
     }
 
     /// Broadcasts a signed transaction; returns the transaction digest.

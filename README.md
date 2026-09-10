@@ -139,14 +139,31 @@ omni transaction broadcast <NEAR-TX-HASH> voter.near network-config mainnet
 
 ## Supported chains
 
-| Family  | Default chains                          | Actions                          | Notes |
-|---------|-----------------------------------------|----------------------------------|-------|
-| `evm`   | eth, base, arb, bnb, pol, hyperevm, abs | `transfer`, `contract-call`, `raw` | EIP-1559; `contract-call` takes a cast-style function signature + JSON args |
-| `svm`   | solana, fogo                            | `transfer`, `setup-nonce`        | The DAO route needs a durable nonce account: run `setup-nonce` once (account-owned paths) or pass `--nonce-account` (DAO-owned paths) |
-| `utxo`  | btc                                     | `transfer`                       | P2WPKH; one MPC signature per input; change returns to the sender |
-| `aptos` | aptos                                   | `transfer`                       | DAO proposals expire 14 days after construction |
-| `sui`   | sui                                     | `transfer`                       | Gas-coin references go stale if the derived address is touched while a DAO votes |
-| `ton`   | ton                                     | `transfer`                       | v5r1 wallet; deploys itself with its first transaction |
+| Family  | Default chains                          | Actions                                   | Notes |
+|---------|-----------------------------------------|-------------------------------------------|-------|
+| `evm`   | eth, base, arb, bnb, pol, hyperevm, abs | `transfer`, `contract-call`, `raw`        | EIP-1559; `contract-call` takes a cast-style function signature + JSON args |
+| `svm`   | solana, fogo                            | `transfer`, `instruction`, `setup-nonce`  | `instruction` = one raw program instruction (`payer` names the derived address). The DAO route needs a durable nonce account: run `setup-nonce` once (account-owned paths) or pass `--nonce-account` (DAO-owned paths) |
+| `utxo`  | btc                                     | `transfer`                                | P2WPKH; one MPC signature per input; change returns to the sender |
+| `aptos` | aptos                                   | `transfer`, `contract-call`               | Every transaction is simulated before signing (gas sized from it, aborts surfaced early); DAO proposals expire 14 days after construction |
+| `sui`   | sui                                     | `transfer`, `move-call`                   | `move-call` resolves `object:0x...` args on-chain (owned or shared); gas-coin references go stale if the derived address is touched while a DAO votes |
+| `ton`   | ton                                     | `transfer`, `send-message`                | `send-message` attaches a body (`comment:<text>` or `boc:<hex>`), bounceable by default; v5r1 wallet deploys itself on first use |
+
+Move calls (Aptos `contract-call`, Sui `move-call`) take the function as
+`<address>::<module>::<function>`, type arguments as a JSON array of Move
+types, and arguments as a JSON array of `type:value` strings:
+
+```console
+omni transaction construct aptos aptos \
+    contract-call 0x1::aptos_account::transfer '[]' '["address:0xd2cf...cff23", "u64:1200"]' \
+    derivation-path omni-1 sign-as-account you.testnet network-config testnet sign-with-keychain send
+
+omni transaction construct sui sui \
+    move-call 0x2::pay::split_and_transfer '["0x2::sui::SUI"]' '["object:0x...coin", "u64:100", "address:0x..."]' \
+    derivation-path omni-1 sign-as-dao dao.sputnik-dao.near 'Pay contractor' proposer.near network-config mainnet sign-with-keychain send
+```
+
+Supported argument types: `bool`, `u8`..`u256`, `address`, `string`, `hex`
+(raw bytes), `vector<address>`, and (Sui only) `object`.
 
 Any chain in a supported family can be added — see Configuration.
 

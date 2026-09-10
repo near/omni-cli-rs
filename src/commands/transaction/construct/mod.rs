@@ -123,6 +123,11 @@ pub fn input_chain(family: &str) -> color_eyre::eyre::Result<Option<String>> {
             "No {family} chains in the omni chain registry - add a [chains.<name>] entry"
         ));
     }
+    // One registered chain of this family (aptos, sui, ton, ...): nothing to
+    // choose, so don't ask.
+    if let [only] = options.as_slice() {
+        return Ok(Some(only.clone()));
+    }
     let selected = inquire::Select::new(&format!("Which {family} chain?"), options).prompt()?;
     let key = selected
         .split_whitespace()

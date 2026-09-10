@@ -7,12 +7,13 @@ pub mod rpc;
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
 use omni_transaction::sui::SuiTransaction;
 use omni_transaction::sui::types::{
-    Argument, CallArg, Command, GasData, ObjectDigest, ObjectRef, ProgrammableTransaction,
-    SignatureScheme as SuiSignatureScheme, SuiAddress, SuiSignature, TransactionExpiration,
-    TransactionKind,
+    Argument, CallArg, Command, GasData, Identifier, ObjectArg, ObjectDigest, ObjectRef,
+    ProgrammableMoveCall, ProgrammableTransaction, SignatureScheme as SuiSignatureScheme,
+    StructTag, SuiAddress, SuiSignature, TransactionExpiration, TransactionKind, TypeTag,
 };
 use omni_transaction::sui::utils::derive_sui_address;
 
+use crate::chains::move_call::{MoveArg, MoveType};
 use crate::chains::{BuiltTransaction, ChainAdapter, ExecutionLatency, SignatureScheme};
 use crate::config::ResolvedChain;
 use crate::mpc::MpcSignatureResponse;
@@ -27,6 +28,49 @@ const GAS_BUDGET_MIST: u64 = 10_000_000;
 pub enum SuiActionSpec {
     /// Native SUI transfer: SplitCoins from the gas coin + TransferObjects.
     Transfer { to: SuiAddress, mist: u64 },
+    /// A single Move call (`package::module::function`) with pure and
+    /// object arguments; object references are resolved at build time.
+    MoveCall {
+        package: SuiAddress,
+        module: String,
+        function: String,
+        ty_args: Vec<MoveType>,
+        args: Vec<MoveArg>,
+        summary: String,
+    },
+}
+
+fn identifier(name: &str) -> color_eyre::eyre::Result<Identifier> {
+    Identifier::new(name).map_err(|err| eyre!("Invalid Move identifier '{name}': {err:?}"))
+}
+
+fn to_type_tag(ty: &MoveType) -> color_eyre::eyre::Result<TypeTag> {
+    Ok(match ty {
+        MoveType::Bool => TypeTag::Bool,
+        MoveType::U8 => TypeTag::U8,
+        MoveType::U16 => TypeTag::U16,
+        MoveType::U32 => TypeTag::U32,
+        MoveType::U64 => TypeTag::U64,
+        MoveType::U128 => TypeTag::U128,
+        MoveType::U256 => TypeTag::U256,
+        MoveType::Address => TypeTag::Address,
+        MoveType::Signer => TypeTag::Signer,
+        MoveType::Vector(inner) => TypeTag::Vector(Box::new(to_type_tag(inner)?)),
+        MoveType::Struct {
+            address,
+            module,
+            name,
+            type_args,
+        } => TypeTag::Struct(Box::new(StructTag {
+            address: SuiAddress(*address),
+            module: identifier(module)?,
+            name: identifier(name)?,
+            type_params: type_args
+                .iter()
+                .map(to_type_tag)
+                .collect::<color_eyre::eyre::Result<_>>()?,
+        })),
+    })
 }
 
 /// What goes into the envelope: the transaction plus the sender's public key,
@@ -75,8 +119,78 @@ impl ChainAdapter for SuiAdapter {
             .reference_gas_price()
             .wrap_err_with(|| format!("Failed to fetch the gas price from {}", chain.rpc_url))?;
 
-        let (amount_mist, to) = match &self.spec {
-            SuiActionSpec::Transfer { to, mist } => (*mist, *to),
+        // Inputs and commands per action; the gas coins are selected below.
+        let (inputs, commands, amount_mist, summary) = match &self.spec {
+            SuiActionSpec::Transfer { to, mist } => (
+                vec![CallArg::pure_u64(*mist), CallArg::pure_address(*to)],
+                vec![
+                    Command::SplitCoins {
+                        coin: Argument::GasCoin,
+                        amounts: vec![Argument::Input(0)],
+                    },
+                    Command::TransferObjects {
+                        objects: vec![Argument::Result(0)],
+                        address: Argument::Input(1),
+                    },
+                ],
+                *mist,
+                format!(
+                    "transfer {} to {}",
+                    format_native(*mist, chain),
+                    to.to_hex()
+                ),
+            ),
+            SuiActionSpec::MoveCall {
+                package,
+                module,
+                function,
+                ty_args,
+                args,
+                summary,
+            } => {
+                let mut inputs = Vec::with_capacity(args.len());
+                for arg in args {
+                    inputs.push(match arg {
+                        MoveArg::Pure { bytes, .. } => CallArg::Pure(bytes.clone()),
+                        MoveArg::Object { id, .. } => {
+                            let object_id = SuiAddress(*id);
+                            let info = rpc.get_object(&object_id.to_hex())?;
+                            CallArg::Object(match info.shared_initial_version {
+                                Some(initial_shared_version) => ObjectArg::SharedObject {
+                                    id: object_id,
+                                    initial_shared_version,
+                                    mutable: true,
+                                },
+                                None => ObjectArg::ImmOrOwnedObject(ObjectRef::new(
+                                    object_id,
+                                    info.version,
+                                    ObjectDigest::from_base58(&info.digest_base58).map_err(
+                                        |err| eyre!("Invalid object digest from the RPC: {err:?}"),
+                                    )?,
+                                )),
+                            })
+                        }
+                    });
+                }
+                let arguments = (0..inputs.len())
+                    .map(|index| Argument::Input(index as u16))
+                    .collect();
+                (
+                    inputs,
+                    vec![Command::MoveCall(ProgrammableMoveCall {
+                        package: *package,
+                        module: identifier(module)?,
+                        function: identifier(function)?,
+                        type_arguments: ty_args
+                            .iter()
+                            .map(to_type_tag)
+                            .collect::<color_eyre::eyre::Result<_>>()?,
+                        arguments,
+                    })],
+                    0,
+                    summary.clone(),
+                )
+            }
         };
         let required = amount_mist + GAS_BUDGET_MIST;
 
@@ -111,17 +225,8 @@ impl ChainAdapter for SuiAdapter {
 
         let tx = SuiTransaction {
             kind: TransactionKind::ProgrammableTransaction(ProgrammableTransaction {
-                inputs: vec![CallArg::pure_u64(amount_mist), CallArg::pure_address(to)],
-                commands: vec![
-                    Command::SplitCoins {
-                        coin: Argument::GasCoin,
-                        amounts: vec![Argument::Input(0)],
-                    },
-                    Command::TransferObjects {
-                        objects: vec![Argument::Result(0)],
-                        address: Argument::Input(1),
-                    },
-                ],
+                inputs,
+                commands,
             }),
             sender,
             gas_data: GasData {
@@ -149,7 +254,7 @@ impl ChainAdapter for SuiAdapter {
             "\n\
              Unsigned {chain_key} transaction (NEAR {near_network}):\n\
              ------------------------------------------------------------\n\
-             action:            transfer {amount} to {to_hex}\n\
+             action:            {summary}\n\
              sender (from):     {sender_hex} (derived: {owner} / \"{derivation_path}\")\n\
              balance:           {balance}\n\
              gas:               budget {budget} at price {gas_price} mist/unit \
@@ -160,8 +265,6 @@ impl ChainAdapter for SuiAdapter {
              ------------------------------------------------------------",
             chain_key = chain.chain_key,
             near_network = chain.near_network,
-            amount = format_native(amount_mist, chain),
-            to_hex = to.to_hex(),
             balance = format_native(total_balance, chain),
             budget = format_native(GAS_BUDGET_MIST, chain),
             gas_coins = tx.gas_data.payment.len(),

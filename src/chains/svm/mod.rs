@@ -54,6 +54,30 @@ pub enum SvmActionSpec {
     /// Create + initialize the derived address's durable nonce account -
     /// the one-time prerequisite for the DAO route on SVM chains.
     SetupNonce,
+    /// One arbitrary program instruction (program call) signed by the
+    /// derived address as fee payer.
+    Instruction {
+        program_id: SolanaAddress,
+        accounts: Vec<InstructionAccount>,
+        data: Vec<u8>,
+        summary: String,
+    },
+}
+
+/// An account of a custom instruction. The derived address is the only key
+/// the MPC can sign for, so it is the only account that may be a signer;
+/// `Payer` names it before the derivation is known.
+#[derive(Debug, Clone)]
+pub struct InstructionAccount {
+    pub key: InstructionAccountKey,
+    pub is_signer: bool,
+    pub is_writable: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum InstructionAccountKey {
+    Payer,
+    Address(SolanaAddress),
 }
 
 pub struct SvmAdapter {
@@ -193,106 +217,153 @@ impl ChainAdapter for SvmAdapter {
         let rpc = rpc::Client::new(&chain.rpc_url)?;
 
         // Resolve blockhash + instruction prefix per action and latency.
-        let (instructions, blockhash_base58, validity_note, summary, required) =
-            match (&self.spec, latency) {
-                (SvmActionSpec::SetupNonce, ExecutionLatency::Governance) => {
+        let (instructions, blockhash_base58, validity_note, summary, required) = match &self.spec {
+            SvmActionSpec::SetupNonce => {
+                if latency == ExecutionLatency::Governance {
                     return Err(eyre!(
                         "setup-nonce must run via sign-as-account (it is itself the \
-                         prerequisite for the DAO route)."
+                             prerequisite for the DAO route)."
                     ));
                 }
-                (SvmActionSpec::SetupNonce, ExecutionLatency::Immediate) => {
-                    if rpc.nonce_account(&nonce_account.to_base58())?.is_some() {
-                        return Err(eyre!(
-                            "The durable nonce account {} for {payer_base58} already exists - \
+                if rpc.nonce_account(&nonce_account.to_base58())?.is_some() {
+                    return Err(eyre!(
+                        "The durable nonce account {} for {payer_base58} already exists - \
                              the DAO route is ready to use.",
-                            nonce_account.to_base58()
-                        ));
-                    }
-                    let rent = rpc.minimum_rent(NONCE_ACCOUNT_SIZE)?;
-                    let recent = rpc.latest_blockhash()?.blockhash;
-                    (
-                        vec![
-                            create_account_with_seed(
-                                payer,
-                                nonce_account,
-                                NONCE_SEED,
-                                rent,
-                                NONCE_ACCOUNT_SIZE,
-                                SYSTEM_PROGRAM,
-                            ),
-                            initialize_nonce_account(nonce_account, payer),
-                        ],
-                        recent,
-                        "expires in ~60-90 seconds (recent blockhash)".to_string(),
-                        format!(
-                            "set up the durable nonce account {} (one-time, enables the \
+                        nonce_account.to_base58()
+                    ));
+                }
+                let rent = rpc.minimum_rent(NONCE_ACCOUNT_SIZE)?;
+                let recent = rpc.latest_blockhash()?.blockhash;
+                (
+                    vec![
+                        create_account_with_seed(
+                            payer,
+                            nonce_account,
+                            NONCE_SEED,
+                            rent,
+                            NONCE_ACCOUNT_SIZE,
+                            SYSTEM_PROGRAM,
+                        ),
+                        initialize_nonce_account(nonce_account, payer),
+                    ],
+                    recent,
+                    "expires in ~60-90 seconds (recent blockhash)".to_string(),
+                    format!(
+                        "set up the durable nonce account {} (one-time, enables the \
                              DAO route; locks {} for rent exemption)",
-                            nonce_account.to_base58(),
-                            format_native(rent, chain),
-                        ),
-                        rent + LAMPORTS_PER_SIGNATURE,
-                    )
-                }
-                (SvmActionSpec::Transfer { to, lamports }, ExecutionLatency::Immediate) => {
-                    let recent = rpc
-                        .latest_blockhash()
-                        .wrap_err("Failed to fetch a recent blockhash")?
-                        .blockhash;
-                    (
+                        nonce_account.to_base58(),
+                        format_native(rent, chain),
+                    ),
+                    rent + LAMPORTS_PER_SIGNATURE,
+                )
+            }
+            SvmActionSpec::Transfer { .. } | SvmActionSpec::Instruction { .. } => {
+                let (base_instructions, summary, required) = match &self.spec {
+                    SvmActionSpec::Transfer { to, lamports } => (
                         vec![utils::system_transfer(payer, *to, *lamports)],
-                        recent,
-                        "expires in ~60-90 seconds (recent blockhash)".to_string(),
                         format!("transfer {} to {to}", format_native(*lamports, chain)),
                         lamports + LAMPORTS_PER_SIGNATURE,
-                    )
-                }
-                (SvmActionSpec::Transfer { to, lamports }, ExecutionLatency::Governance) => {
-                    let nonce_account = self.nonce_account_override.unwrap_or(nonce_account);
-                    let nonce_info = rpc
-                        .nonce_account(&nonce_account.to_base58())?
-                        .wrap_err_with(|| {
-                            format!(
-                                "The DAO route on SVM needs a durable nonce account with \
-                             authority {payer_base58}, and none was found at {}.\n\
-                             - For an account-owned derived address, create the \
-                             deterministic one (signed by the derived key itself):\n  \
-                             omni transaction construct svm {} setup-nonce \
-                             derivation-path {derivation_path} sign-as-account {owner} ...\n\
-                             - For a DAO-owned derived address, creation cannot go through \
-                             the MPC (that is exactly what the nonce unblocks), so create \
-                             one from any funded Solana wallet:\n  \
-                             solana create-nonce-account <new-keypair.json> 0.0015 \
-                             --nonce-authority {payer_base58}\n  \
-                             ... then pass it via --nonce-account <address>.",
-                                nonce_account.to_base58(),
-                                chain.chain_key,
-                            )
-                        })?;
-                    if nonce_info.authority != payer_base58 {
-                        return Err(eyre!(
-                            "The nonce account {} has authority {}, not the derived \
-                             address {payer_base58}.",
-                            nonce_account.to_base58(),
-                            nonce_info.authority
-                        ));
+                    ),
+                    SvmActionSpec::Instruction {
+                        program_id,
+                        accounts,
+                        data,
+                        summary,
+                    } => {
+                        let accounts = accounts
+                            .iter()
+                            .map(|account| {
+                                let pubkey = match &account.key {
+                                    InstructionAccountKey::Payer => payer,
+                                    InstructionAccountKey::Address(address) => *address,
+                                };
+                                if account.is_signer && pubkey != payer {
+                                    return Err(eyre!(
+                                        "Account {pubkey} is marked as a signer, but the MPC \
+                                             can only sign for the derived address {payer_base58} \
+                                             (use `payer` for it)."
+                                    ));
+                                }
+                                Ok(AccountMeta {
+                                    pubkey,
+                                    is_signer: account.is_signer,
+                                    is_writable: account.is_writable,
+                                })
+                            })
+                            .collect::<color_eyre::eyre::Result<Vec<_>>>()?;
+                        (
+                            vec![Instruction {
+                                program_id: *program_id,
+                                accounts,
+                                data: data.clone(),
+                            }],
+                            summary.clone(),
+                            LAMPORTS_PER_SIGNATURE,
+                        )
                     }
-                    (
-                        vec![
-                            advance_nonce_account(nonce_account, payer),
-                            utils::system_transfer(payer, *to, *lamports),
-                        ],
-                        nonce_info.durable_nonce_blockhash,
-                        format!(
-                            "durable nonce (account {}) - valid until this nonce advances; \
-                             one governance transaction per nonce at a time",
-                            nonce_account.to_base58()
-                        ),
-                        format!("transfer {} to {to}", format_native(*lamports, chain)),
-                        lamports + LAMPORTS_PER_SIGNATURE,
-                    )
+                    SvmActionSpec::SetupNonce => unreachable!("handled above"),
+                };
+                match latency {
+                    ExecutionLatency::Immediate => {
+                        let recent = rpc
+                            .latest_blockhash()
+                            .wrap_err("Failed to fetch a recent blockhash")?
+                            .blockhash;
+                        (
+                            base_instructions,
+                            recent,
+                            "expires in ~60-90 seconds (recent blockhash)".to_string(),
+                            summary,
+                            required,
+                        )
+                    }
+                    ExecutionLatency::Governance => {
+                        let nonce_account = self.nonce_account_override.unwrap_or(nonce_account);
+                        let nonce_info =
+                                rpc.nonce_account(&nonce_account.to_base58())?
+                                    .wrap_err_with(|| {
+                                        format!(
+                                            "The DAO route on SVM needs a durable nonce account with \
+                                             authority {payer_base58}, and none was found at {}.\n\
+                                             - For an account-owned derived address, create the \
+                                             deterministic one (signed by the derived key itself):\n  \
+                                             omni transaction construct svm {} setup-nonce \
+                                             derivation-path {derivation_path} sign-as-account {owner} ...\n\
+                                             - For a DAO-owned derived address, creation cannot go through \
+                                             the MPC (that is exactly what the nonce unblocks), so create \
+                                             one from any funded Solana wallet:\n  \
+                                             solana create-nonce-account <new-keypair.json> 0.0015 \
+                                             --nonce-authority {payer_base58}\n  \
+                                             ... then pass it via --nonce-account <address>.",
+                                            nonce_account.to_base58(),
+                                            chain.chain_key,
+                                        )
+                                    })?;
+                        if nonce_info.authority != payer_base58 {
+                            return Err(eyre!(
+                                "The nonce account {} has authority {}, not the derived \
+                                     address {payer_base58}.",
+                                nonce_account.to_base58(),
+                                nonce_info.authority
+                            ));
+                        }
+                        let mut instructions = vec![advance_nonce_account(nonce_account, payer)];
+                        instructions.extend(base_instructions);
+                        (
+                            instructions,
+                            nonce_info.durable_nonce_blockhash,
+                            format!(
+                                "durable nonce (account {}) - valid until this nonce advances; \
+                                     one governance transaction per nonce at a time",
+                                nonce_account.to_base58()
+                            ),
+                            summary,
+                            required,
+                        )
+                    }
                 }
-            };
+            }
+        };
 
         let blockhash = Blockhash::from_base58(&blockhash_base58)
             .map_err(|err| eyre!("Invalid blockhash: {err}"))?;

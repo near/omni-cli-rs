@@ -11,7 +11,7 @@ use color_eyre::owo_colors::OwoColorize;
 use omni_transaction::ton::TonTransaction;
 use omni_transaction::ton::types::{
     Coins, InternalMessage, MAINNET_GLOBAL_ID, TESTNET_GLOBAL_ID, TonAddress, WalletVersion,
-    v5r1_wallet_id,
+    parse_boc_single_root, v5r1_wallet_id,
 };
 use omni_transaction::ton::utils::derive_wallet_address;
 
@@ -30,6 +30,24 @@ pub enum TonActionSpec {
     /// Native TON transfer. Sent non-bounceable so not-yet-deployed
     /// recipient wallets keep the funds (standard wallet behavior).
     Transfer { to: TonAddress, nanotons: u64 },
+    /// An internal message with a body - a contract call (jetton transfer,
+    /// NFT, DEX, ...) or a text comment - and an explicit bounce flag.
+    Message {
+        to: TonAddress,
+        nanotons: u64,
+        body: TonBody,
+        bounce: bool,
+    },
+}
+
+/// The body of a TON internal message.
+#[derive(Debug, Clone)]
+pub enum TonBody {
+    None,
+    /// A text comment (op 0 + UTF-8), the convention wallets display.
+    Comment(String),
+    /// A pre-built body cell as a BOC (e.g. from a dApp or `tonutils`).
+    Boc(Vec<u8>),
 }
 
 pub struct TonAdapter {
@@ -100,7 +118,54 @@ impl ChainAdapter for TonAdapter {
             .wallet_information(&wallet_address)
             .wrap_err_with(|| format!("Failed to fetch wallet state from {}", chain.rpc_url))?;
 
-        let TonActionSpec::Transfer { to, nanotons } = &self.spec;
+        let (to, nanotons, message, action) = match &self.spec {
+            TonActionSpec::Transfer { to, nanotons } => {
+                let mut message =
+                    InternalMessage::new(*to, Coins::from_nano(u128::from(*nanotons)));
+                // Non-bounceable: funds stay with not-yet-deployed recipient wallets.
+                message.bounce = false;
+                (to, *nanotons, message, "transfer".to_string())
+            }
+            TonActionSpec::Message {
+                to,
+                nanotons,
+                body,
+                bounce,
+            } => {
+                let mut message =
+                    InternalMessage::new(*to, Coins::from_nano(u128::from(*nanotons)));
+                message.bounce = *bounce;
+                let action = match body {
+                    TonBody::None => "send".to_string(),
+                    TonBody::Comment(text) => {
+                        message = message
+                            .with_comment(text)
+                            .map_err(|err| eyre!("Comment does not fit a cell: {err:?}"))?;
+                        format!("send with comment {text:?}")
+                    }
+                    TonBody::Boc(bytes) => {
+                        message.body = Some(
+                            parse_boc_single_root(bytes)
+                                .map_err(|err| eyre!("Invalid body BOC: {err:?}"))?,
+                        );
+                        format!("send with a {}-byte body BOC", bytes.len())
+                    }
+                };
+                (
+                    to,
+                    *nanotons,
+                    message,
+                    format!(
+                        "{action} ({})",
+                        if *bounce {
+                            "bounceable"
+                        } else {
+                            "non-bounceable"
+                        }
+                    ),
+                )
+            }
+        };
         // Non-bounceable, network-correct rendering for the summary.
         let to_display = to.to_base64_string(false, chain.near_network != "mainnet");
 
@@ -120,10 +185,6 @@ impl ChainAdapter for TonAdapter {
         let valid_until = (unix_now() + validity_secs)
             .try_into()
             .wrap_err("valid_until overflows u32")?;
-
-        let mut message = InternalMessage::new(*to, Coins::from_nano(u128::from(*nanotons)));
-        // Non-bounceable: funds stay with not-yet-deployed recipient wallets.
-        message.bounce = false;
 
         let tx = TonTransaction {
             wallet_version: WalletVersion::V5R1,
@@ -154,7 +215,7 @@ impl ChainAdapter for TonAdapter {
             "\n\
              Unsigned {chain_key} transaction (NEAR {near_network}):\n\
              ------------------------------------------------------------\n\
-             action:            transfer {amount} to {to_display}\n\
+             action:            {action} {amount} to {to_display}\n\
              wallet (from):     {wallet_address} (v5r1, derived: {owner} / \"{derivation_path}\")\n\
              balance:           {balance}{balance_note}\n\
              seqno:             {seqno}{deploy_note}\n\
@@ -163,7 +224,7 @@ impl ChainAdapter for TonAdapter {
              ------------------------------------------------------------",
             chain_key = chain.chain_key,
             near_network = chain.near_network,
-            amount = format_native(*nanotons, chain),
+            amount = format_native(nanotons, chain),
             balance = format_native(info.balance_nanotons, chain),
             seqno = info.seqno,
             deploy_note = if info.deployed {

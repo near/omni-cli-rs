@@ -55,9 +55,111 @@ impl SuiChain {
 #[strum_discriminants(derive(EnumMessage, EnumIter))]
 /// Select the action:
 pub enum SuiAction {
-    #[strum_discriminants(strum(message = "transfer   -   Transfer SUI"))]
+    #[strum_discriminants(strum(message = "transfer    -   Transfer SUI"))]
     /// Transfer SUI
     Transfer(Transfer),
+    #[strum_discriminants(strum(
+        message = "move-call   -   Call a Move function (<package>::<module>::<function>) with typed args"
+    ))]
+    /// Call a Move function (<package>::<module>::<function>) with typed args
+    MoveCall(MoveCall),
+}
+
+#[derive(Debug, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(input_context = SuiChainContext)]
+#[interactive_clap(output_context = MoveCallContext)]
+pub struct MoveCall {
+    /// Move function (<package>::<module>::<function>, e.g. 0x2::coin::zero):
+    function: String,
+    #[interactive_clap(skip_default_input_arg)]
+    /// Type arguments: JSON array of Move types, e.g. '["0x2::sui::SUI"]' ('[]' for none)
+    type_args: String,
+    #[interactive_clap(skip_default_input_arg)]
+    /// Arguments: JSON array of type:value strings, e.g. '["object:0x...", "u64:100", "address:0x..."]'
+    args: String,
+    #[interactive_clap(named_arg)]
+    /// Derivation path - determines the acting foreign account
+    derivation_path: crate::commands::transaction::construct::sign_as::DerivationPath,
+}
+
+#[derive(Clone)]
+pub struct MoveCallContext(SpecContext);
+
+impl MoveCallContext {
+    pub fn from_previous_context(
+        previous_context: SuiChainContext,
+        scope: &<MoveCall as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
+    ) -> color_eyre::eyre::Result<Self> {
+        use crate::chains::move_call;
+
+        let (package, module, function) = move_call::parse_function_path(&scope.function)?;
+        let type_arg_texts = move_call::parse_string_list(&scope.type_args)?;
+        let ty_args = type_arg_texts
+            .iter()
+            .map(|ty| move_call::parse_type(ty))
+            .collect::<color_eyre::eyre::Result<Vec<_>>>()?;
+        let args = move_call::parse_string_list(&scope.args)?
+            .iter()
+            .map(|arg| move_call::parse_arg(arg))
+            .collect::<color_eyre::eyre::Result<Vec<_>>>()?;
+        let arg_displays: Vec<String> = args
+            .iter()
+            .map(|arg| match arg {
+                move_call::MoveArg::Pure { display, .. }
+                | move_call::MoveArg::Object { display, .. } => display.clone(),
+            })
+            .collect();
+        let generics = if type_arg_texts.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", type_arg_texts.join(", "))
+        };
+        let spec = SuiActionSpec::MoveCall {
+            package: omni_transaction::sui::types::SuiAddress(package),
+            module,
+            function,
+            ty_args,
+            args,
+            summary: format!(
+                "call {}{generics}({})",
+                scope.function.trim(),
+                arg_displays.join(", ")
+            ),
+        };
+        Ok(Self(SpecContext {
+            global_context: previous_context.global_context,
+            chain_key: previous_context.selected.chain_key.clone(),
+            chain_def: previous_context.selected.chain_def.clone(),
+            mpc_config: previous_context.selected.mpc_config.clone(),
+            adapter: Arc::new(SuiAdapter { spec }),
+        }))
+    }
+}
+
+impl From<MoveCallContext> for SpecContext {
+    fn from(item: MoveCallContext) -> Self {
+        item.0
+    }
+}
+
+impl MoveCall {
+    fn input_type_args(_context: &SuiChainContext) -> color_eyre::eyre::Result<Option<String>> {
+        Ok(Some(
+            inquire::Text::new("Type arguments (JSON array of Move types; [] for none):")
+                .with_initial_value("[]")
+                .prompt()?,
+        ))
+    }
+
+    fn input_args(_context: &SuiChainContext) -> color_eyre::eyre::Result<Option<String>> {
+        Ok(Some(
+            inquire::Text::new(
+                "Arguments (JSON array of type:value, e.g. [\"object:0x...\", \"u64:100\"]):",
+            )
+            .with_initial_value("[]")
+            .prompt()?,
+        ))
+    }
 }
 
 #[derive(Debug, Clone, interactive_clap::InteractiveClap)]

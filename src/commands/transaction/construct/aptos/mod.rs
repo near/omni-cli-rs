@@ -56,10 +56,119 @@ impl AptosChain {
 /// Select the action:
 pub enum AptosAction {
     #[strum_discriminants(strum(
-        message = "transfer   -   Transfer APT (creates the recipient account if needed)"
+        message = "transfer        -   Transfer APT (creates the recipient account if needed)"
     ))]
     /// Transfer APT (creates the recipient account if needed)
     Transfer(Transfer),
+    #[strum_discriminants(strum(
+        message = "contract-call   -   Call an entry function (<address>::<module>::<function>) with typed args"
+    ))]
+    /// Call an entry function (<address>::<module>::<function>) with typed args
+    ContractCall(ContractCall),
+}
+
+#[derive(Debug, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(input_context = AptosChainContext)]
+#[interactive_clap(output_context = ContractCallContext)]
+pub struct ContractCall {
+    /// Entry function (<address>::<module>::<function>, e.g. 0x1::aptos_account::transfer):
+    function: String,
+    #[interactive_clap(skip_default_input_arg)]
+    /// Type arguments: JSON array of Move types, e.g. '["0x1::aptos_coin::AptosCoin"]' ('[]' for none)
+    type_args: String,
+    #[interactive_clap(skip_default_input_arg)]
+    /// Arguments: JSON array of type:value strings, e.g. '["address:0x1", "u64:100"]' ('[]' for none)
+    args: String,
+    #[interactive_clap(named_arg)]
+    /// Derivation path - determines the acting foreign account
+    derivation_path: crate::commands::transaction::construct::sign_as::DerivationPath,
+}
+
+#[derive(Clone)]
+pub struct ContractCallContext(SpecContext);
+
+impl ContractCallContext {
+    pub fn from_previous_context(
+        previous_context: AptosChainContext,
+        scope: &<ContractCall as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
+    ) -> color_eyre::eyre::Result<Self> {
+        use crate::chains::move_call::{self, MoveArg};
+
+        let (address, module, function) = move_call::parse_function_path(&scope.function)?;
+        let ty_args = move_call::parse_string_list(&scope.type_args)?
+            .iter()
+            .map(|ty| move_call::parse_type(ty))
+            .collect::<color_eyre::eyre::Result<Vec<_>>>()?;
+        let mut args = Vec::new();
+        let mut arg_displays = Vec::new();
+        for text in move_call::parse_string_list(&scope.args)? {
+            match move_call::parse_arg(&text)? {
+                MoveArg::Pure { bytes, display } => {
+                    args.push(bytes);
+                    arg_displays.push(display);
+                }
+                MoveArg::Object { .. } => {
+                    return Err(color_eyre::eyre::eyre!(
+                        "'{text}': object arguments are a Sui concept; Aptos entry functions \
+                         take addresses (address:0x...)"
+                    ));
+                }
+            }
+        }
+        let generics = if scope.type_args.trim().is_empty() || ty_args.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "<{}>",
+                move_call::parse_string_list(&scope.type_args)?.join(", ")
+            )
+        };
+        let spec = AptosActionSpec::EntryFunction {
+            module_address: omni_transaction::aptos::types::AccountAddress(address),
+            module,
+            function,
+            ty_args,
+            args,
+            summary: format!(
+                "call {}{generics}({})",
+                scope.function.trim(),
+                arg_displays.join(", ")
+            ),
+        };
+        Ok(Self(SpecContext {
+            global_context: previous_context.global_context,
+            chain_key: previous_context.selected.chain_key.clone(),
+            chain_def: previous_context.selected.chain_def.clone(),
+            mpc_config: previous_context.selected.mpc_config.clone(),
+            adapter: Arc::new(AptosAdapter { spec }),
+        }))
+    }
+}
+
+impl From<ContractCallContext> for SpecContext {
+    fn from(item: ContractCallContext) -> Self {
+        item.0
+    }
+}
+
+impl ContractCall {
+    fn input_type_args(_context: &AptosChainContext) -> color_eyre::eyre::Result<Option<String>> {
+        Ok(Some(
+            inquire::Text::new("Type arguments (JSON array of Move types; [] for none):")
+                .with_initial_value("[]")
+                .prompt()?,
+        ))
+    }
+
+    fn input_args(_context: &AptosChainContext) -> color_eyre::eyre::Result<Option<String>> {
+        Ok(Some(
+            inquire::Text::new(
+                "Arguments (JSON array of type:value, e.g. [\"address:0x1\", \"u64:100\"]):",
+            )
+            .with_initial_value("[]")
+            .prompt()?,
+        ))
+    }
 }
 
 #[derive(Debug, Clone, interactive_clap::InteractiveClap)]

@@ -10,10 +10,11 @@ use color_eyre::owo_colors::OwoColorize;
 use omni_transaction::aptos::AptosTransaction;
 use omni_transaction::aptos::types::{
     AccountAddress, Ed25519PublicKey, Ed25519Signature, EntryFunction, Identifier, ModuleId,
-    TransactionPayload,
+    StructTag, TransactionPayload, TypeTag,
 };
 use sha3::{Digest, Sha3_256};
 
+use crate::chains::move_call::MoveType;
 use crate::chains::{BuiltTransaction, ChainAdapter, ExecutionLatency, SignatureScheme};
 use crate::config::ResolvedChain;
 use crate::mpc::MpcSignatureResponse;
@@ -23,7 +24,16 @@ pub const FAMILY: &str = "aptos";
 /// Single-signer ed25519 scheme byte in the authentication-key preimage.
 const ED25519_SCHEME: u8 = 0x00;
 
-const MAX_GAS_AMOUNT: u64 = 2_000;
+/// `max_gas_amount` when the transaction cannot be simulated (unfunded
+/// sender): plenty for a plain transfer, refunded when unused.
+const FALLBACK_MAX_GAS_AMOUNT: u64 = 2_000;
+/// Aptos rejects a transaction that may create an account unless
+/// `gas_unit_price * max_gas_amount >= 10 * gas_unit_price + 2 * <fee for one
+/// new state slot>` (aptos-vm `check_gas`, MAX_GAS_UNITS_BELOW_MIN_TRANSACTION_GAS_UNITS).
+/// The slot fee is 400_000 octas plus a per-byte estimate; this leaves room.
+const ACCOUNT_CREATION_FEE_OCTAS: u64 = 600_000;
+/// Aptos's hard cap on `max_gas_amount`.
+const APTOS_MAX_GAS_AMOUNT: u64 = 20_000_000;
 const IMMEDIATE_EXPIRATION_SECS: u64 = 10 * 60;
 const GOVERNANCE_EXPIRATION_SECS: u64 = 14 * 24 * 60 * 60;
 
@@ -32,6 +42,85 @@ pub enum AptosActionSpec {
     /// APT transfer via `0x1::aptos_account::transfer` (creates the recipient
     /// account if needed).
     Transfer { to: AccountAddress, octas: u64 },
+    /// Any entry function with BCS-encoded arguments.
+    EntryFunction {
+        module_address: AccountAddress,
+        module: String,
+        function: String,
+        ty_args: Vec<MoveType>,
+        args: Vec<Vec<u8>>,
+        summary: String,
+    },
+}
+
+fn identifier(name: &str) -> color_eyre::eyre::Result<Identifier> {
+    Identifier::new(name).map_err(|err| eyre!("Invalid Move identifier '{name}': {err:?}"))
+}
+
+fn to_type_tag(ty: &MoveType) -> color_eyre::eyre::Result<TypeTag> {
+    Ok(match ty {
+        MoveType::Bool => TypeTag::Bool,
+        MoveType::U8 => TypeTag::U8,
+        MoveType::U16 => TypeTag::U16,
+        MoveType::U32 => TypeTag::U32,
+        MoveType::U64 => TypeTag::U64,
+        MoveType::U128 => TypeTag::U128,
+        MoveType::U256 => TypeTag::U256,
+        MoveType::Address => TypeTag::Address,
+        MoveType::Signer => TypeTag::Signer,
+        MoveType::Vector(inner) => TypeTag::Vector(Box::new(to_type_tag(inner)?)),
+        MoveType::Struct {
+            address,
+            module,
+            name,
+            type_args,
+        } => TypeTag::Struct(Box::new(StructTag {
+            address: AccountAddress(*address),
+            module: identifier(module)?,
+            name: identifier(name)?,
+            type_args: type_args
+                .iter()
+                .map(to_type_tag)
+                .collect::<color_eyre::eyre::Result<_>>()?,
+        })),
+    })
+}
+
+/// Translates the abort codes of `0x1::transaction_validation` (the
+/// framework prologue/epilogue) into plain language. The reason is the low
+/// 16 bits of the canonical code; the category sits above.
+fn explain_vm_status(vm_status: &str) -> Option<String> {
+    let code = vm_status
+        .split_once("0x1::transaction_validation: 0x")
+        .and_then(|(_, rest)| {
+            let digits: String = rest.chars().take_while(char::is_ascii_hexdigit).collect();
+            u64::from_str_radix(&digits, 16).ok()
+        })?;
+    let reason = match code & 0xffff {
+        1001 => "the derived key does not match the account's authentication key",
+        1002 => "sequence number too old (a transaction with it was already executed)",
+        1003 => "sequence number too new (an earlier one is still pending)",
+        1004 => "the sender account does not exist on chain - fund the derived address first",
+        1005 => {
+            "the account cannot pay the gas fee - you are likely moving the whole balance; \
+             leave a little APT for gas (a transfer costs on the order of 0.0001 APT)"
+        }
+        1006 => "the transaction has expired",
+        1007 => "wrong chain id (the RPC and the registry disagree about the network)",
+        _ => return None,
+    };
+    Some(reason.to_string())
+}
+
+/// The `max_gas_amount` to attach: twice the simulated usage (or the
+/// fallback when simulation was not possible), never below what Aptos
+/// demands for a transaction that may create an account, capped at the
+/// protocol maximum. Unused gas is refunded, so erring high is free.
+fn max_gas_amount(simulated_gas_used: Option<u64>, gas_unit_price: u64) -> u64 {
+    let base = simulated_gas_used.map_or(FALLBACK_MAX_GAS_AMOUNT, |used| used.saturating_mul(2));
+    let account_creation_floor =
+        (10 * gas_unit_price + 2 * ACCOUNT_CREATION_FEE_OCTAS).div_ceil(gas_unit_price.max(1));
+    base.max(account_creation_floor).min(APTOS_MAX_GAS_AMOUNT)
 }
 
 /// What goes into the envelope: the raw transaction plus the sender's public
@@ -111,16 +200,11 @@ impl ChainAdapter for AptosAdapter {
         };
         let expiration_timestamp_secs = ledger_time_secs + expiration_offset_secs;
 
-        let (payload, summary, required_octas) = match &self.spec {
+        let (payload, summary, value_octas) = match &self.spec {
             AptosActionSpec::Transfer { to, octas } => (
                 TransactionPayload::EntryFunction(EntryFunction::new(
-                    ModuleId::new(
-                        AccountAddress::ONE,
-                        Identifier::new("aptos_account")
-                            .map_err(|err| eyre!("Invalid identifier: {err:?}"))?,
-                    ),
-                    Identifier::new("transfer")
-                        .map_err(|err| eyre!("Invalid identifier: {err:?}"))?,
+                    ModuleId::new(AccountAddress::ONE, identifier("aptos_account")?),
+                    identifier("transfer")?,
                     vec![],
                     vec![to.0.to_vec(), octas.to_le_bytes().to_vec()],
                 )),
@@ -129,19 +213,86 @@ impl ChainAdapter for AptosAdapter {
                     format_native(*octas, chain),
                     to.to_hex()
                 ),
-                octas + MAX_GAS_AMOUNT * gas_unit_price,
+                *octas,
+            ),
+            AptosActionSpec::EntryFunction {
+                module_address,
+                module,
+                function,
+                ty_args,
+                args,
+                summary,
+            } => (
+                TransactionPayload::EntryFunction(EntryFunction::new(
+                    ModuleId::new(*module_address, identifier(module)?),
+                    identifier(function)?,
+                    ty_args
+                        .iter()
+                        .map(to_type_tag)
+                        .collect::<color_eyre::eyre::Result<_>>()?,
+                    args.clone(),
+                )),
+                summary.clone(),
+                0,
             ),
         };
 
-        let tx = AptosTransaction {
+        // Simulate (zero signature; Aptos does not verify it) to size the gas
+        // and to surface aborts before anything is signed. Skipped when the
+        // sender cannot pay for the simulation itself - the DAO route often
+        // constructs before the derived account is funded.
+        let mut tx = AptosTransaction {
             sender,
             sequence_number,
             payload,
-            max_gas_amount: MAX_GAS_AMOUNT,
+            max_gas_amount: (balance.saturating_sub(value_octas) / gas_unit_price.max(1))
+                .min(APTOS_MAX_GAS_AMOUNT),
             gas_unit_price,
             expiration_timestamp_secs,
             chain_id,
         };
+        let simulation = if tx.max_gas_amount >= FALLBACK_MAX_GAS_AMOUNT {
+            let probe =
+                tx.build_with_signature(&Ed25519PublicKey(pk), &Ed25519Signature([0u8; 64]));
+            let simulation = rpc.simulate(&probe)?;
+            if !simulation.success {
+                let explanation = explain_vm_status(&simulation.vm_status)
+                    .map_or_else(String::new, |reason| format!("\n  => {reason}"));
+                return Err(eyre!(
+                    "The transaction would fail on Aptos: {}{explanation}\n(simulated before \
+                     signing - nothing was sent to the MPC)",
+                    simulation.vm_status
+                ));
+            }
+            Some(simulation)
+        } else if balance > 0 && latency == ExecutionLatency::Immediate {
+            // Funded, but the value leaves (almost) nothing for gas: a
+            // certain failure, so refuse instead of spending an MPC signature.
+            return Err(eyre!(
+                "Moving {} would leave only {} for gas on {sender_hex} - the transaction \
+                 cannot pay its fee. Send at most the balance minus the fee (a transfer \
+                 costs on the order of 0.0001 APT; leave ~0.001 APT to be safe).",
+                format_native(value_octas, chain),
+                format_native(balance.saturating_sub(value_octas), chain),
+            ));
+        } else {
+            None
+        };
+        tx.max_gas_amount = max_gas_amount(
+            simulation.as_ref().map(|simulation| simulation.gas_used),
+            gas_unit_price,
+        );
+        let max_gas_cost = tx.max_gas_amount * gas_unit_price;
+        let required_octas = value_octas + max_gas_cost;
+        let gas_note = match &simulation {
+            Some(simulation) => format!(
+                "; simulated {} units (~{})",
+                simulation.gas_used,
+                format_native(simulation.gas_used * gas_unit_price, chain)
+            ),
+            None => "; not simulated (sender unfunded)".to_string(),
+        };
+
         let signing_payload = tx.build_for_signing();
 
         let balance_note = if balance < required_octas {
@@ -164,15 +315,16 @@ impl ChainAdapter for AptosAdapter {
              sender (from):     {sender_hex} (derived: {owner} / \"{derivation_path}\")\n\
              balance:           {balance}{balance_note}\n\
              sequence number:   {sequence_number}\n\
-             gas:               max {MAX_GAS_AMOUNT} units x {gas_unit_price} octas/unit \
-             (max {max_gas_cost})\n\
+             gas:               max {max_gas} units x {gas_unit_price} octas/unit \
+             (max {max_gas_cost}){gas_note}\n\
              expiration:        unix {expiration_timestamp_secs} ({validity_note})\n\
              signing payload:   {payload_len} bytes (salted message, signed as-is by the MPC)\n\
              ------------------------------------------------------------",
             chain_key = chain.chain_key,
             near_network = chain.near_network,
             balance = format_native(balance, chain),
-            max_gas_cost = format_native(MAX_GAS_AMOUNT * gas_unit_price, chain),
+            max_gas = tx.max_gas_amount,
+            max_gas_cost = format_native(max_gas_cost, chain),
             payload_len = signing_payload.len(),
         );
 
@@ -280,6 +432,42 @@ fn format_native(octas: u64, chain: &ResolvedChain) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The floor comes from aptos-vm's account-creation rule:
+    /// price * max_gas >= 10 * price + 2 * slot fee. With the old fixed 2000
+    /// units at 100 octas/unit (200_000 octas) a transfer to a fresh account
+    /// was rejected with MAX_GAS_UNITS_BELOW_MIN_TRANSACTION_GAS_UNITS.
+    #[test]
+    fn explains_framework_abort_codes() {
+        let cant_pay =
+            explain_vm_status("Move abort in 0x1::transaction_validation: 0x203ed").unwrap();
+        assert!(cant_pay.contains("cannot pay the gas fee"));
+        assert!(
+            explain_vm_status("Move abort in 0x1::transaction_validation: 0x603ec")
+                .unwrap()
+                .contains("does not exist")
+        );
+        assert!(explain_vm_status("Move abort in 0xabc::omni_bridge: 0x1").is_none());
+        assert!(explain_vm_status("Execution failed").is_none());
+    }
+
+    #[test]
+    fn max_gas_covers_account_creation_and_doubles_simulation() {
+        let price = 100;
+        let floor = max_gas_amount(None, price);
+        assert!(floor * price >= 10 * price + 2 * ACCOUNT_CREATION_FEE_OCTAS);
+        assert!(floor > 2_000, "the old constant was too small: {floor}");
+        // Simulated usage doubles, but never drops below the floor.
+        assert_eq!(max_gas_amount(Some(20_000), price), 40_000);
+        assert_eq!(max_gas_amount(Some(10), price), floor);
+        // Capped at the protocol maximum.
+        assert_eq!(
+            max_gas_amount(Some(u64::MAX / 4), price),
+            APTOS_MAX_GAS_AMOUNT
+        );
+        // A free-gas network (price 0) must not divide by zero.
+        assert!(max_gas_amount(None, 0) >= FALLBACK_MAX_GAS_AMOUNT);
+    }
     use ed25519_dalek::{Signer, SigningKey, Verifier};
 
     /// Round-trip through a real ed25519 key: build a transfer, sign the
@@ -303,7 +491,7 @@ mod tests {
                 vec![],
                 vec![vec![0xddu8; 32], 1_000u64.to_le_bytes().to_vec()],
             )),
-            max_gas_amount: MAX_GAS_AMOUNT,
+            max_gas_amount: FALLBACK_MAX_GAS_AMOUNT,
             gas_unit_price: 100,
             expiration_timestamp_secs: 1_800_000_000,
             chain_id: 2,
@@ -353,7 +541,7 @@ mod tests {
                 vec![],
                 vec![vec![0xddu8; 32], 1_000u64.to_le_bytes().to_vec()],
             )),
-            max_gas_amount: MAX_GAS_AMOUNT,
+            max_gas_amount: FALLBACK_MAX_GAS_AMOUNT,
             gas_unit_price: 100,
             expiration_timestamp_secs: 1_800_000_000,
             chain_id: 2,

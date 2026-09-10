@@ -320,7 +320,11 @@ fn list(
     table.printstd();
     eprintln!(
         "Review one with: {}",
-        format!("omni proposal review {dao} <id>").yellow()
+        format!(
+            "omni proposal review {dao} <id> network-config {}",
+            network_config.network_name
+        )
+        .yellow()
     );
     Ok(())
 }
@@ -451,13 +455,38 @@ fn review(
                 "\n{}",
                 "VERIFIED: the MPC would sign exactly the transaction shown above.".green()
             );
-            eprintln!(
-                "Vote with:\n  {}\n  {}",
-                format!("omni proposal vote {dao} {proposal_id} approve <your-account> ...")
+            // What to do next depends on where the proposal is in its life.
+            match status {
+                "InProgress" => eprintln!(
+                    "Vote with:\n  {}\n  {}",
+                    format!(
+                        "omni proposal vote {dao} {proposal_id} approve <your-account> \
+                         network-config {network} sign-with-keychain send",
+                        network = network_config.network_name
+                    )
                     .yellow(),
-                format!("omni proposal vote {dao} {proposal_id} reject <your-account> ...")
+                    format!(
+                        "omni proposal vote {dao} {proposal_id} reject <your-account> \
+                         network-config {network} sign-with-keychain send",
+                        network = network_config.network_name
+                    )
                     .yellow()
-            );
+                ),
+                "Approved" => eprintln!(
+                    "Already approved - voting is over. If the destination-chain transaction \
+                     has not been broadcast yet, finalize it with the deciding vote's NEAR \
+                     transaction hash:\n  {}",
+                    format!(
+                        "omni transaction broadcast <NEAR-TX-HASH> <voter-account-id> \
+                         network-config {}",
+                        network_config.network_name
+                    )
+                    .yellow()
+                ),
+                other => eprintln!(
+                    "Proposal status is {other} - nothing left to do; the MPC will not sign it."
+                ),
+            }
             Ok(())
         }
         Err(err) => Err(err.wrap_err(

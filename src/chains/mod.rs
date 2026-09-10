@@ -1,6 +1,7 @@
 pub mod aptos;
 pub mod evm;
 pub mod http;
+pub mod move_call;
 pub mod sui;
 pub mod svm;
 pub mod ton;

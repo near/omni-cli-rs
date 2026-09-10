@@ -482,17 +482,24 @@ impl From<SignAsDaoContext> for near_cli_rs::commands::ActionContext {
 
         let on_after_sending_transaction_callback: near_cli_rs::transaction_signature_options::OnAfterSendingTransactionCallback = {
             let dao_account_id = item.dao_account_id.clone();
-            Arc::new(move |outcome_view, _network_config| {
+            Arc::new(move |outcome_view, network_config| {
+                let network = &network_config.network_name;
                 match crate::dao::proposal_id_from_outcome(outcome_view) {
                     Some(proposal_id) => {
                         eprintln!(
                             "\nProposal #{proposal_id} created on {dao_account_id}.\n\
                              Share with the other members for review:\n  {}\n\
                              Once approved, the deciding vote's transaction hash finalizes it:\n  {}",
-                            format!("omni proposal review {dao_account_id} {proposal_id}")
-                                .yellow(),
-                            "omni transaction broadcast <NEAR-TX-HASH> <voter-account-id>"
-                                .yellow()
+                            format!(
+                                "omni proposal review {dao_account_id} {proposal_id} \
+                                 network-config {network}"
+                            )
+                            .yellow(),
+                            format!(
+                                "omni transaction broadcast <NEAR-TX-HASH> <voter-account-id> \
+                                 network-config {network}"
+                            )
+                            .yellow()
                         );
                     }
                     None => {
