@@ -116,7 +116,7 @@ mod tests {
     fn lookup_networks_puts_mainnet_first() {
         let mut chain = ChainDef {
             family: "evm".into(),
-            networks: Default::default(),
+            networks: BTreeMap::default(),
         };
         for name in ["testnet", "mainnet", "devnet"] {
             chain.networks.insert(
