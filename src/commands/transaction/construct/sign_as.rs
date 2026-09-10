@@ -50,6 +50,49 @@ impl DerivationPathContext {
     }
 }
 
+/// `derivation-path <path>` for actions that only make sense on the direct
+/// route - e.g. `setup-nonce`, which is itself the DAO route's prerequisite.
+/// No sign-as fork: the flow continues straight into `sign-as-account`, and
+/// the console command keeps the same shape as everywhere else.
+#[derive(Debug, Clone, interactive_clap::InteractiveClap)]
+#[interactive_clap(input_context = SpecContext)]
+#[interactive_clap(output_context = DerivationPathAccountOnlyContext)]
+pub struct DerivationPathAccountOnly {
+    #[interactive_clap(skip_default_input_arg)]
+    /// Derivation path (determines the acting foreign account, e.g. base-locker-admin):
+    path: String,
+    #[interactive_clap(named_arg)]
+    /// Your NEAR account calls the MPC right now (sign + broadcast in one go)
+    sign_as_account: SignAsAccount,
+}
+
+impl DerivationPathAccountOnly {
+    fn input_path(_context: &SpecContext) -> color_eyre::eyre::Result<Option<String>> {
+        crate::commands::input_derivation_path()
+    }
+}
+
+#[derive(Clone)]
+pub struct DerivationPathAccountOnlyContext(DerivationPathContext);
+
+impl DerivationPathAccountOnlyContext {
+    pub fn from_previous_context(
+        previous_context: SpecContext,
+        scope: &<DerivationPathAccountOnly as interactive_clap::ToInteractiveClapContextScope>::InteractiveClapContextScope,
+    ) -> color_eyre::eyre::Result<Self> {
+        Ok(Self(DerivationPathContext {
+            spec_context: previous_context,
+            path: scope.path.clone(),
+        }))
+    }
+}
+
+impl From<DerivationPathAccountOnlyContext> for DerivationPathContext {
+    fn from(item: DerivationPathAccountOnlyContext) -> Self {
+        item.0
+    }
+}
+
 #[derive(Debug, EnumDiscriminants, Clone, interactive_clap::InteractiveClap)]
 #[interactive_clap(context = DerivationPathContext)]
 #[strum_discriminants(derive(EnumMessage, EnumIter))]

@@ -140,8 +140,8 @@ impl Transfer {
 #[interactive_clap(output_context = SetupNonceContext)]
 pub struct SetupNonce {
     #[interactive_clap(named_arg)]
-    /// Derivation path - determines the acting foreign account
-    derivation_path: crate::commands::transaction::construct::sign_as::DerivationPath,
+    /// Derivation path - determines the acting foreign account (direct route only)
+    derivation_path: crate::commands::transaction::construct::sign_as::DerivationPathAccountOnly,
 }
 
 #[derive(Clone)]
