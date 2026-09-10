@@ -62,8 +62,30 @@ pub enum Command {
     SelfUpdate(self::commands::self_update::SelfUpdate),
 }
 
+/// xterm-256 color 141 (#af87ff): the closest palette entry to the website's
+/// violet accent (#a78bfa). A palette index rather than 24-bit RGB so it
+/// renders on terminals without truecolor support (e.g. macOS Terminal.app).
+pub const ACCENT_ANSI: u8 = 141;
+
+/// near-cli-rs's interactive style with omni's accent color: the prompt
+/// markers and the selection dot are violet instead of green. Guide lines
+/// stay blue and input/help text yellow, matching the website's terminal
+/// semantics.
+fn render_config() -> inquire::ui::RenderConfig<'static> {
+    use inquire::ui::{Color, StyleSheet, Styled};
+
+    let accent = Color::AnsiValue(ACCENT_ANSI);
+    let mut render_config = near_cli_rs::get_global_render_config();
+    render_config.prompt_prefix = Styled::new("◆ ").with_fg(accent);
+    render_config.answered_prompt_prefix = Styled::new("◇ ").with_fg(accent);
+    render_config.highlighted_option_prefix = Styled::new(" ●").with_fg(accent);
+    render_config.selected_checkbox = Styled::new("◼").with_fg(accent);
+    render_config.selected_option = Some(StyleSheet::new().with_fg(Color::Grey));
+    render_config
+}
+
 fn main() -> CliResult {
-    inquire::set_global_render_config(near_cli_rs::get_global_render_config());
+    inquire::set_global_render_config(render_config());
 
     let near_config = near_cli_rs::config::Config::get_config_toml()?;
 

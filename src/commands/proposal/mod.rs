@@ -307,9 +307,13 @@ fn list(
         proposals.len()
     );
     let mut table = crate::commands::new_table();
-    table.set_titles(
-        prettytable::row![Fg=>"#", "Status", "Chain / kind", "Intent / description", "Path"],
-    );
+    table.set_titles(crate::commands::title_row(&[
+        "#",
+        "Status",
+        "Chain / kind",
+        "Intent / description",
+        "Path",
+    ]));
     for proposal in &proposals {
         table.add_row(proposal_row(proposal));
     }

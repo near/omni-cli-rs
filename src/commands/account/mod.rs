@@ -141,7 +141,11 @@ fn show(
         network_config.network_name
     );
     let mut table = crate::commands::new_table();
-    table.set_titles(prettytable::row![Fg=>"Family", "Derived address", "Chains"]);
+    table.set_titles(crate::commands::title_row(&[
+        "Family",
+        "Derived address",
+        "Chains",
+    ]));
     for (family, (resolved, chain_keys)) in &families {
         let address =
             crate::chains::derived_address_for_chain(resolved, &keys.secp256k1, &keys.ed25519)
@@ -248,7 +252,11 @@ fn balance(
 
     eprintln!("\nBalance for {owner} / \"{path}\":");
     let mut table = crate::commands::new_table();
-    table.set_titles(prettytable::row![Fg=>"Chain", "Derived address", "Balance"]);
+    table.set_titles(crate::commands::title_row(&[
+        "Chain",
+        "Derived address",
+        "Balance",
+    ]));
     table.add_row(prettytable::row![chain_key, address, formatted]);
     table.printstd();
     Ok(())

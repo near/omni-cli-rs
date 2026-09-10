@@ -88,9 +88,13 @@ impl ShowContext {
         );
         eprintln!("\n{} chain(s):", config.chains.len());
         let mut table = crate::commands::new_table();
-        table.set_titles(
-            prettytable::row![Fg=>"Chain", "Family", "NEAR network", "RPC endpoint", "Chain id"],
-        );
+        table.set_titles(crate::commands::title_row(&[
+            "Chain",
+            "Family",
+            "NEAR network",
+            "RPC endpoint",
+            "Chain id",
+        ]));
         for (key, chain) in &config.chains {
             for (index, (network, variant)) in chain.networks.iter().enumerate() {
                 table.add_row(prettytable::row![

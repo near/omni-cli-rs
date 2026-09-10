@@ -11,6 +11,24 @@ pub(crate) fn new_table() -> prettytable::Table {
     table
 }
 
+/// A title row in omni's accent color (the same violet as the interactive
+/// prompts); prettytable's `Fg=>` style letters only reach the 16 basic
+/// colors, so the 256-color index is set on each cell directly.
+pub(crate) fn title_row(titles: &[&str]) -> prettytable::Row {
+    prettytable::Row::new(
+        titles
+            .iter()
+            .map(|title| {
+                prettytable::Cell::new(title)
+                    .with_style(prettytable::Attr::ForegroundColor(u32::from(
+                        crate::ACCENT_ANSI,
+                    )))
+                    .with_style(prettytable::Attr::Bold)
+            })
+            .collect(),
+    )
+}
+
 /// The shared derivation-path prompt, pre-filled with the configurable
 /// default (`default_derivation_path` in the omni config).
 pub(crate) fn input_derivation_path() -> color_eyre::eyre::Result<Option<String>> {
