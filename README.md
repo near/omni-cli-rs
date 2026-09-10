@@ -168,3 +168,8 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 
 After changing the dist config, regenerate the workflow with `dist init`.
+
+The landing page lives in `site/` (vanilla HTML/CSS/JS, same design system
+as [near.cli.rs](https://near.cli.rs)) and deploys to GitHub Pages via
+`.github/workflows/pages.yml`. Preview it locally with
+`python3 -m http.server -d site 8080`.
