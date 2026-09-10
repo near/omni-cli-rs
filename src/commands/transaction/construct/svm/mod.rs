@@ -62,15 +62,15 @@ pub enum SvmAction {
     /// Transfer the native token (SOL, ...)
     Transfer(Transfer),
     #[strum_discriminants(strum(
-        message = "setup-nonce   -   One-time durable nonce account setup (enables the DAO route)"
-    ))]
-    /// One-time durable nonce account setup (enables the DAO route)
-    SetupNonce(SetupNonce),
-    #[strum_discriminants(strum(
         message = "instruction   -   Call a program: one raw instruction (program id, accounts, data)"
     ))]
     /// Call a program: one raw instruction (program id, accounts, data)
     Instruction(RawInstruction),
+    #[strum_discriminants(strum(
+        message = "setup-nonce   -   One-time durable nonce account setup (enables the DAO route)"
+    ))]
+    /// One-time durable nonce account setup (enables the DAO route)
+    SetupNonce(SetupNonce),
 }
 
 #[derive(Debug, Clone, interactive_clap::InteractiveClap)]
