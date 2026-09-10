@@ -3,7 +3,6 @@
 `omni` controls accounts on other chains from NEAR via a single NEAR DAO
 (SputnikDAO) or a plain NEAR account using
 [MPC chain signatures](https://docs.near.org/chain-abstraction/chain-signatures).
-Website: <https://omni-cli-rs.github.io>
 
 Instead of maintaining a separate multisig on every chain (Gnosis Safe, Squads,
 Petra Vault, xDAO, ...), one DAO on NEAR approves proposals that ask the MPC to
