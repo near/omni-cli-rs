@@ -7,6 +7,7 @@
 pub mod rpc;
 
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
+use color_eyre::owo_colors::OwoColorize;
 use omni_transaction::ton::TonTransaction;
 use omni_transaction::ton::types::{
     Coins, InternalMessage, MAINNET_GLOBAL_ID, TESTNET_GLOBAL_ID, TonAddress, WalletVersion,
@@ -139,10 +140,11 @@ impl ChainAdapter for TonAdapter {
         let required = nanotons + 10_000_000; // ~0.01 TON headroom for fees
         let balance_note = if info.balance_nanotons < required {
             format!(
-                "\n   WARNING: balance {} is below the required {} (amount + fees) - \
+                "\n   {warning} balance {} is below the required {} (amount + fees) - \
                  fund the derived wallet first",
                 format_native(info.balance_nanotons, chain),
                 format_native(required, chain),
+                warning = "WARNING:".yellow(),
             )
         } else {
             String::new()

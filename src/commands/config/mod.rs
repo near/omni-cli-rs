@@ -86,24 +86,25 @@ impl ShowContext {
                 format!(", signer contracts: {:?}", config.mpc.contracts)
             },
         );
-        eprintln!(
-            "\n{} chain(s):\n------------------------------------------------------------",
-            config.chains.len()
+        eprintln!("\n{} chain(s):", config.chains.len());
+        let mut table = crate::commands::new_table();
+        table.set_titles(
+            prettytable::row![Fg=>"Chain", "Family", "NEAR network", "RPC endpoint", "Chain id"],
         );
         for (key, chain) in &config.chains {
-            eprintln!("{key:<10} [{}]", chain.family);
-            for (network, variant) in &chain.networks {
-                eprintln!(
-                    "  {network:<9} {}{}",
+            for (index, (network, variant)) in chain.networks.iter().enumerate() {
+                table.add_row(prettytable::row![
+                    if index == 0 { key } else { "" },
+                    if index == 0 { &chain.family } else { "" },
+                    network,
                     variant.rpc_url,
                     variant
                         .chain_id
-                        .map(|id| format!(" (chain id {id})"))
-                        .unwrap_or_default(),
-                );
+                        .map_or_else(|| "-".to_string(), |id| id.to_string()),
+                ]);
             }
         }
-        eprintln!("------------------------------------------------------------");
+        table.printstd();
         Ok(Self)
     }
 }

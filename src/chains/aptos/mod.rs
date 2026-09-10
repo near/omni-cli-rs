@@ -6,6 +6,7 @@
 pub mod rpc;
 
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
+use color_eyre::owo_colors::OwoColorize;
 use omni_transaction::aptos::AptosTransaction;
 use omni_transaction::aptos::types::{
     AccountAddress, Ed25519PublicKey, Ed25519Signature, EntryFunction, Identifier, ModuleId,
@@ -145,10 +146,11 @@ impl ChainAdapter for AptosAdapter {
 
         let balance_note = if balance < required_octas {
             format!(
-                "\n   WARNING: balance {} is below the required {} (amount + max gas) - \
+                "\n   {warning} balance {} is below the required {} (amount + max gas) - \
                  fund the derived address first",
                 format_native(balance, chain),
                 format_native(required_octas, chain),
+                warning = "WARNING:".yellow(),
             )
         } else {
             String::new()

@@ -11,6 +11,7 @@
 pub mod rpc;
 
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
+use color_eyre::owo_colors::OwoColorize;
 use omni_transaction::TxBuilder;
 use omni_transaction::solana::types::{
     AccountMeta, Blockhash, Instruction, SolanaAddress, SolanaSignature,
@@ -307,10 +308,11 @@ impl ChainAdapter for SvmAdapter {
         let balance = rpc.balance(&payer_base58).unwrap_or(0);
         let balance_note = if balance < required {
             format!(
-                "\n   WARNING: balance {} is below the required {} (amount + fee/rent) - \
+                "\n   {warning} balance {} is below the required {} (amount + fee/rent) - \
                  fund the derived address first",
                 format_native(balance, chain),
                 format_native(required, chain),
+                warning = "WARNING:".yellow(),
             )
         } else {
             String::new()

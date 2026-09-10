@@ -3787,6 +3787,7 @@ dependencies = [
  "near-primitives",
  "near-token",
  "omni-transaction",
+ "prettytable",
  "reqwest 0.13.1",
  "ripemd",
  "self_update",

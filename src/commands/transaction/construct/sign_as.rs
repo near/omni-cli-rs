@@ -8,6 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use base64::Engine;
+use color_eyre::owo_colors::OwoColorize;
 use strum::{EnumDiscriminants, EnumIter, EnumMessage};
 
 use super::SpecContext;
@@ -253,7 +254,7 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
                         "The NEAR transaction succeeded, but no MPC signature was found in \
                          its receipts yet (the MPC responds asynchronously). Broadcast once \
                          it lands with:\n  {}",
-                        recovery_hint()
+                        recovery_hint().yellow()
                     );
                     return Ok(());
                 }
@@ -263,9 +264,9 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
                     .assemble_and_broadcast(&chain, &unsigned_tx, &signatures)
                 {
                     Ok(tx_hash) => {
-                        eprintln!("\nBroadcast successful: {tx_hash}");
+                        eprintln!("\n{} {tx_hash}", "Broadcast successful:".green());
                         if let Some(link) = chain.explorer_link(&tx_hash) {
-                            eprintln!("Explorer: {link}");
+                            eprintln!("Explorer: {}", link.cyan());
                         }
                         Ok(())
                     }
@@ -273,7 +274,7 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
                         eprintln!(
                             "The MPC signature was produced, but broadcasting failed. \
                              Retry with:\n  {}",
-                            recovery_hint()
+                            recovery_hint().yellow()
                         );
                         Err(err)
                     }
@@ -443,10 +444,12 @@ impl From<SignAsDaoContext> for near_cli_rs::commands::ActionContext {
                     Some(proposal_id) => {
                         eprintln!(
                             "\nProposal #{proposal_id} created on {dao_account_id}.\n\
-                             Share with the other members for review:\n  \
-                             omni proposal review {dao_account_id} {proposal_id}\n\
-                             Once approved, the deciding vote's transaction hash finalizes it:\n  \
-                             omni transaction broadcast <NEAR-TX-HASH> <voter-account-id>"
+                             Share with the other members for review:\n  {}\n\
+                             Once approved, the deciding vote's transaction hash finalizes it:\n  {}",
+                            format!("omni proposal review {dao_account_id} {proposal_id}")
+                                .yellow(),
+                            "omni transaction broadcast <NEAR-TX-HASH> <voter-account-id>"
+                                .yellow()
                         );
                     }
                     None => {

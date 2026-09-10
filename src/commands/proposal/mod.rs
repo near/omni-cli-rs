@@ -4,6 +4,7 @@
 
 use base64::Engine;
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
+use color_eyre::owo_colors::OwoColorize;
 use strum::{EnumDiscriminants, EnumIter, EnumMessage};
 
 use crate::envelope::Envelope;
@@ -195,33 +196,48 @@ fn verify_envelope_against_kind(
     Ok(checks)
 }
 
-/// One list line for a proposal: decoded envelope summary for omni proposals,
-/// a terse fallback for everything else.
-fn proposal_summary(proposal: &serde_json::Value) -> String {
+/// One table row per proposal: decoded envelope summary for omni proposals,
+/// a terse kind/description fallback for everything else.
+fn proposal_row(proposal: &serde_json::Value) -> prettytable::Row {
     let id = proposal["id"].as_u64().unwrap_or_default();
     let status = proposal["status"].as_str().unwrap_or("?");
+    let status_cell = prettytable::Cell::new(status).style_spec(match status {
+        "Approved" => "Fg",
+        "Rejected" | "Removed" | "Expired" | "Failed" => "Fr",
+        "InProgress" => "Fy",
+        _ => "",
+    });
     let description = proposal["description"].as_str().unwrap_or_default();
-    if let Some(envelope) = crate::envelope::decode_description(description) {
-        format!(
-            "#{id:<4} [{status}] [{}/{}] {} (path \"{}\")",
-            envelope.family,
-            envelope.chain,
-            if envelope.intent.is_empty() {
-                "(no intent)"
-            } else {
-                &envelope.intent
-            },
-            envelope.path,
-        )
-    } else {
-        let kind = proposal["kind"]
-            .as_object()
-            .and_then(|kind| kind.keys().next().cloned())
-            .or_else(|| proposal["kind"].as_str().map(str::to_string))
-            .unwrap_or_else(|| "?".to_string());
-        let head: String = description.chars().take(48).collect();
-        format!("#{id:<4} [{status}] {kind}: {head}")
-    }
+    let (chain, intent, path) =
+        if let Some(envelope) = crate::envelope::decode_description(description) {
+            (
+                format!("{}/{}", envelope.family, envelope.chain),
+                if envelope.intent.is_empty() {
+                    "(no intent)".to_string()
+                } else {
+                    envelope.intent
+                },
+                envelope.path,
+            )
+        } else {
+            let kind = proposal["kind"]
+                .as_object()
+                .and_then(|kind| kind.keys().next().cloned())
+                .or_else(|| proposal["kind"].as_str().map(str::to_string))
+                .unwrap_or_else(|| "?".to_string());
+            (
+                kind,
+                description.chars().take(48).collect(),
+                "-".to_string(),
+            )
+        };
+    prettytable::Row::new(vec![
+        prettytable::Cell::new(&id.to_string()),
+        status_cell,
+        prettytable::Cell::new(&chain),
+        prettytable::Cell::new(&intent),
+        prettytable::Cell::new(&path),
+    ])
 }
 
 // ----------------------------------------------------------------------- list
@@ -287,16 +303,20 @@ fn list(
     let proposals = crate::dao::fetch_proposals(&api_network, dao, from_index, LIST_PAGE_SIZE)?;
 
     eprintln!(
-        "\nLast {} of {last_id} proposal(s) on {dao}:\n\
-         ------------------------------------------------------------",
+        "\nLast {} of {last_id} proposal(s) on {dao}:",
         proposals.len()
     );
+    let mut table = crate::commands::new_table();
+    table.set_titles(
+        prettytable::row![Fg=>"#", "Status", "Chain / kind", "Intent / description", "Path"],
+    );
     for proposal in &proposals {
-        eprintln!("{}", proposal_summary(proposal));
+        table.add_row(proposal_row(proposal));
     }
+    table.printstd();
     eprintln!(
-        "------------------------------------------------------------\n\
-         Review one with: omni proposal review {dao} <id>"
+        "Review one with: {}",
+        format!("omni proposal review {dao} <id>").yellow()
     );
     Ok(())
 }
@@ -421,13 +441,18 @@ fn review(
     {
         Ok(checks) => {
             for check in checks {
-                eprintln!("[OK] {check}");
+                eprintln!("{} {check}", "[OK]".green());
             }
             eprintln!(
-                "\nVERIFIED: the MPC would sign exactly the transaction shown above.\n\
-                 Vote with:\n  \
-                 omni proposal vote {dao} {proposal_id} approve <your-account> ...\n  \
-                 omni proposal vote {dao} {proposal_id} reject <your-account> ..."
+                "\n{}",
+                "VERIFIED: the MPC would sign exactly the transaction shown above.".green()
+            );
+            eprintln!(
+                "Vote with:\n  {}\n  {}",
+                format!("omni proposal vote {dao} {proposal_id} approve <your-account> ...")
+                    .yellow(),
+                format!("omni proposal vote {dao} {proposal_id} reject <your-account> ...")
+                    .yellow()
             );
             Ok(())
         }
@@ -597,19 +622,25 @@ impl From<VoteContext> for near_cli_rs::commands::ActionContext {
                 if signatures.is_empty() {
                     eprintln!(
                         "\nVote recorded on {dao} proposal #{proposal_id}. If a later vote \
-                         crosses the threshold, finalize with that vote's transaction hash:\n  \
-                         omni transaction broadcast <NEAR-TX-HASH> <voter-account-id> \
-                         network-config {}",
-                        network_config.network_name
+                         crosses the threshold, finalize with that vote's transaction hash:\n  {}",
+                        format!(
+                            "omni transaction broadcast <NEAR-TX-HASH> <voter-account-id> \
+                             network-config {}",
+                            network_config.network_name
+                        )
+                        .yellow()
                     );
                 } else {
                     eprintln!(
                         "\nThis vote crossed the threshold - the MPC signature(s) are in this \
-                         transaction. Broadcast the foreign transaction with:\n  \
-                         omni transaction broadcast {} {} network-config {}",
-                        outcome_view.transaction.hash,
-                        outcome_view.transaction.signer_id,
-                        network_config.network_name
+                         transaction. Broadcast the foreign transaction with:\n  {}",
+                        format!(
+                            "omni transaction broadcast {} {} network-config {}",
+                            outcome_view.transaction.hash,
+                            outcome_view.transaction.signer_id,
+                            network_config.network_name
+                        )
+                        .yellow()
                     );
                 }
                 Ok(())

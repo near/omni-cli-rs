@@ -6,6 +6,7 @@
 
 use base64::Engine;
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
+use color_eyre::owo_colors::OwoColorize;
 
 use crate::envelope::Envelope;
 use crate::mpc::MpcSignatureResponse;
@@ -165,9 +166,9 @@ fn broadcast(
 
     let foreign_tx_hash =
         crate::chains::assemble_and_broadcast(&chain, &envelope.unsigned_tx, &signatures)?;
-    eprintln!("\nBroadcast successful: {foreign_tx_hash}");
+    eprintln!("\n{} {foreign_tx_hash}", "Broadcast successful:".green());
     if let Some(link) = chain.explorer_link(&foreign_tx_hash) {
-        eprintln!("Explorer: {link}");
+        eprintln!("Explorer: {}", link.cyan());
     }
     Ok(())
 }

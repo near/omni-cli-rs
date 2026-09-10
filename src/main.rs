@@ -1,5 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
+use color_eyre::owo_colors::OwoColorize;
 use interactive_clap::ToCliArgs;
 pub use near_cli_rs::CliResult;
 use near_cli_rs::Verbosity;
@@ -99,9 +100,13 @@ fn main() -> CliResult {
         interactive_clap::ResultFromCli::Ok(cli_cmd)
         | interactive_clap::ResultFromCli::Cancel(Some(cli_cmd)) => {
             eprintln!(
-                "Your console command:\n{} {}",
-                std::env::args().next().as_deref().unwrap_or("./omni"),
-                shell_words::join(cli_cmd.to_cli_args())
+                "Your console command:\n{}",
+                format!(
+                    "{} {}",
+                    std::env::args().next().as_deref().unwrap_or("./omni"),
+                    shell_words::join(cli_cmd.to_cli_args())
+                )
+                .yellow()
             );
             Ok(Some(cli_cmd))
         }
@@ -115,9 +120,13 @@ fn main() -> CliResult {
         interactive_clap::ResultFromCli::Err(optional_cli_cmd, err) => {
             if let Some(cli_cmd) = optional_cli_cmd {
                 eprintln!(
-                    "Your console command:\n{} {}",
-                    std::env::args().next().as_deref().unwrap_or("./omni"),
-                    shell_words::join(cli_cmd.to_cli_args())
+                    "Your console command:\n{}",
+                    format!(
+                        "{} {}",
+                        std::env::args().next().as_deref().unwrap_or("./omni"),
+                        shell_words::join(cli_cmd.to_cli_args())
+                    )
+                    .yellow()
                 );
             }
             Err(err)

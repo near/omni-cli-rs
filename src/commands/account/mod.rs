@@ -137,19 +137,18 @@ fn show(
     let keys = fetch_derived_keys(network_config, &omni_config.mpc, owner, path)?;
 
     eprintln!(
-        "\nDerived addresses for {owner} / \"{path}\" (NEAR {}):\n\
-         ------------------------------------------------------------",
+        "\nDerived addresses for {owner} / \"{path}\" (NEAR {}):",
         network_config.network_name
     );
+    let mut table = crate::commands::new_table();
+    table.set_titles(prettytable::row![Fg=>"Family", "Derived address", "Chains"]);
     for (family, (resolved, chain_keys)) in &families {
-        match crate::chains::derived_address_for_chain(resolved, &keys.secp256k1, &keys.ed25519) {
-            Ok(address) => {
-                eprintln!("{family:<7} {address}  ({})", chain_keys.join(", "));
-            }
-            Err(err) => eprintln!("{family:<7} <error: {err}>"),
-        }
+        let address =
+            crate::chains::derived_address_for_chain(resolved, &keys.secp256k1, &keys.ed25519)
+                .unwrap_or_else(|err| format!("<error: {err}>"));
+        table.add_row(prettytable::row![family, address, chain_keys.join(", ")]);
     }
-    eprintln!("------------------------------------------------------------");
+    table.printstd();
     Ok(())
 }
 
@@ -247,6 +246,10 @@ fn balance(
         crate::chains::derived_balance_for_chain(&chain, &keys.secp256k1, &keys.ed25519)
             .wrap_err_with(|| format!("Failed to fetch the balance from {}", chain.rpc_url))?;
 
-    eprintln!("\n{chain_key} balance of {address} ({owner} / \"{path}\"): {formatted}");
+    eprintln!("\nBalance for {owner} / \"{path}\":");
+    let mut table = crate::commands::new_table();
+    table.set_titles(prettytable::row![Fg=>"Chain", "Derived address", "Balance"]);
+    table.add_row(prettytable::row![chain_key, address, formatted]);
+    table.printstd();
     Ok(())
 }
