@@ -31,8 +31,17 @@ pub fn encode_calldata(
     };
 
     // Canonical signature (aliases like `uint` normalized to `uint256`)
-    // determines the 4-byte selector.
-    let canonical_signature = format!("{name}{}", tuple_type.sol_type_name());
+    // determines the 4-byte selector. Join the components ourselves: the
+    // tuple's own `sol_type_name()` renders a one-element tuple as
+    // `(address,)`, which would hash to a selector no contract has.
+    let canonical_signature = format!(
+        "{name}({})",
+        component_types
+            .iter()
+            .map(DynSolType::sol_type_name)
+            .collect::<Vec<_>>()
+            .join(",")
+    );
     let selector = &alloy_primitives::keccak256(canonical_signature.as_bytes())[..4];
 
     let args_json = args_json.trim();
@@ -93,6 +102,20 @@ mod tests {
         assert_eq!(&calldata[..4], &[0xa9, 0x05, 0x9c, 0xbb]);
         assert_eq!(calldata.len(), 4 + 32 + 32);
         assert_eq!(calldata[4 + 32 + 31], 0xe8); // 1000 = 0x3e8
+    }
+
+    #[test]
+    fn encodes_single_arg_function() {
+        // Regression: a one-element tuple must not render as `(address,)`.
+        let (calldata, canonical) = encode_calldata(
+            "balanceOf(address)",
+            r#"["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"]"#,
+        )
+        .unwrap();
+        assert_eq!(canonical, "balanceOf(address)");
+        // selector of balanceOf(address) is 0x70a08231
+        assert_eq!(&calldata[..4], &[0x70, 0xa0, 0x82, 0x31]);
+        assert_eq!(calldata.len(), 4 + 32);
     }
 
     #[test]
