@@ -208,6 +208,48 @@ pub struct OmniConfig {
     pub chains: BTreeMap<String, ChainDef>,
     #[serde(default)]
     pub evm: EvmSettings,
+    #[serde(default)]
+    pub svm: SvmSettings,
+}
+
+/// SVM-wide settings (not per chain).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct SvmSettings {
+    /// Durable nonce accounts created for *other* derived addresses (a DAO's)
+    /// with `setup-nonce --nonce-authority`, per chain key: authority ->
+    /// nonce account. Recorded automatically when such a setup lands, so the
+    /// DAO route on this machine finds them without `--nonce-account`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub nonce_accounts: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl SvmSettings {
+    pub fn recorded_nonce_account(&self, chain_key: &str, authority: &str) -> Option<&str> {
+        self.nonce_accounts
+            .get(chain_key)?
+            .get(authority)
+            .map(String::as_str)
+    }
+}
+
+/// Remembers `nonce_account` as the durable nonce of `authority` on
+/// `chain_key`. Best-effort: a config that cannot be written only costs the
+/// convenience.
+pub fn record_nonce_account(chain_key: &str, authority: &str, nonce_account: &str) {
+    let result = load_or_init().and_then(|mut config| {
+        config
+            .svm
+            .nonce_accounts
+            .entry(chain_key.to_string())
+            .or_default()
+            .insert(authority.to_string(), nonce_account.to_string());
+        save(&config)
+    });
+    if let Err(err) = result {
+        crate::output::warn(format!(
+            "Could not record the nonce account in the omni config: {err:#}"
+        ));
+    }
 }
 
 /// EVM-wide settings (not per chain).

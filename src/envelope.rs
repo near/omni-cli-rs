@@ -48,6 +48,11 @@ pub struct EnvelopeMeta {
     pub nonce: Option<u64>,
     #[serde(default)]
     pub builder_version: String,
+    /// What to tell the user once this transaction lands (e.g. the flag a
+    /// follow-up command needs). Set by the direct route; recovery via
+    /// `transaction broadcast` prints it too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_broadcast: Option<String>,
 }
 
 /// Warn above this envelope size: proposals live in DAO state forever and
@@ -87,6 +92,7 @@ mod tests {
             meta: EnvelopeMeta {
                 nonce: Some(17),
                 builder_version: "0.1.0".to_string(),
+                after_broadcast: None,
             },
         };
         let description = encode_description(&envelope).unwrap();

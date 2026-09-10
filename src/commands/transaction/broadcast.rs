@@ -170,6 +170,9 @@ fn broadcast(
     if let Some(link) = chain.explorer_link(&foreign_tx_hash) {
         eprintln!("Explorer: {}", link.cyan());
     }
+    if let Some(note) = &envelope.meta.after_broadcast {
+        eprintln!("\n{note}");
+    }
     Ok(())
 }
 

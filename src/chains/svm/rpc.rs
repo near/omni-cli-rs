@@ -142,15 +142,50 @@ impl Client {
 
     /// Broadcasts base64-encoded wire bytes; returns the transaction
     /// signature.
+    ///
+    /// Preflight simulates at `confirmed`, the commitment the blockhash was
+    /// fetched at - the default (`finalized`) rejects a blockhash the
+    /// finalized bank has not reached yet. Load-balanced public endpoints
+    /// can still route the send to a node behind the one that served the
+    /// blockhash, so "Blockhash not found" is retried a few times before it
+    /// is reported.
     pub fn send_transaction(&self, tx_base64: &str) -> color_eyre::eyre::Result<String> {
         #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
         struct SendConfig {
             encoding: &'static str,
+            preflight_commitment: &'static str,
         }
-        self.rpc.call(
-            "sendTransaction",
-            (tx_base64, SendConfig { encoding: "base64" }),
-        )
+        const ATTEMPTS: u32 = 4;
+        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+        let mut attempt = 1;
+        loop {
+            let result: color_eyre::eyre::Result<String> = self.rpc.call(
+                "sendTransaction",
+                (
+                    tx_base64,
+                    SendConfig {
+                        encoding: "base64",
+                        preflight_commitment: "confirmed",
+                    },
+                ),
+            );
+            match result {
+                Err(err)
+                    if attempt < ATTEMPTS && format!("{err:#}").contains("Blockhash not found") =>
+                {
+                    crate::output::info(format!(
+                        "The RPC node has not seen the blockhash yet (attempt {attempt}/{ATTEMPTS}) \
+                         - retrying in {}s ...",
+                        RETRY_DELAY.as_secs()
+                    ));
+                    std::thread::sleep(RETRY_DELAY);
+                    attempt += 1;
+                }
+                other => return other,
+            }
+        }
     }
 }
 

@@ -235,6 +235,11 @@ explorer_tx_url = "https://sepolia.basescan.org/tx/"
 - `[evm] etherscan_api_key = "..."` (or the `ETHERSCAN_API_KEY` environment
   variable) lets the EVM contract-call prompt fetch ABIs from Etherscan-family
   explorers in addition to Sourcify. One key serves every Etherscan chain.
+- `[svm.nonce_accounts.<chain>]` maps a DAO's derived address to the durable
+  nonce account created for it with `setup-nonce --nonce-authority`. omni
+  records it automatically when that setup lands, so DAO-route commands on
+  this machine need no `--nonce-account`; on another machine pass the flag or
+  add the same line.
 
 ## Development
 

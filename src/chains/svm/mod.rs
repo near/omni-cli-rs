@@ -125,6 +125,49 @@ pub fn nonce_account_for(
     (create_with_seed(payer, &seed), seed)
 }
 
+/// The nonce account this machine recorded for `authority` when it ran
+/// `setup-nonce --nonce-authority` (see [`crate::config::SvmSettings`]).
+fn recorded_nonce_account(
+    chain: &ResolvedChain,
+    authority: SolanaAddress,
+) -> Option<SolanaAddress> {
+    let config = crate::config::load_or_init().ok()?;
+    let recorded = config
+        .svm
+        .recorded_nonce_account(&chain.chain_key, &authority.to_base58())?;
+    SolanaAddress::from_base58(recorded).ok()
+}
+
+/// If the transaction initializes a durable nonce account, returns
+/// `(nonce account, authority)`: `InitializeNonceAccount` (system program
+/// index 6) on its first account, with the authority in the data.
+fn initialized_nonce_account(tx: &SolanaTransaction) -> Option<(SolanaAddress, SolanaAddress)> {
+    let (account_keys, instructions) = match &tx.message {
+        omni_transaction::solana::types::SolanaMessage::Legacy {
+            account_keys,
+            instructions,
+            ..
+        }
+        | omni_transaction::solana::types::SolanaMessage::V0 {
+            account_keys,
+            instructions,
+            ..
+        } => (account_keys, instructions),
+    };
+    instructions.iter().find_map(|instruction| {
+        let program = account_keys.get(usize::from(instruction.program_id_index))?;
+        if *program != SYSTEM_PROGRAM
+            || instruction.data.len() != 4 + 32
+            || instruction.data[..4] != 6u32.to_le_bytes()
+        {
+            return None;
+        }
+        let nonce_account = *account_keys.get(usize::from(*instruction.accounts.first()?))?;
+        let authority = SolanaAddress(instruction.data[4..].try_into().ok()?);
+        Some((nonce_account, authority))
+    })
+}
+
 /// How DAO-route commands reference a nonce account: the deterministic one
 /// of the derived address is found automatically; one created by someone
 /// else must be passed explicitly.
@@ -137,7 +180,8 @@ fn nonce_account_flag_hint(
         String::new()
     } else {
         format!(
-            "\nDAO-route commands for that derived address must pass it explicitly: \
+            "\nThis machine remembers it (omni-config.toml, [svm.nonce_accounts]), so DAO-route \
+             commands for that derived address find it automatically here; elsewhere pass \
              --nonce-account {nonce_base58}"
         )
     }
@@ -378,7 +422,22 @@ impl ChainAdapter for SvmAdapter {
                         )
                     }
                     ExecutionLatency::Governance => {
-                        let nonce_account = self.nonce_account_override.unwrap_or(nonce_account);
+                        let recorded = recorded_nonce_account(chain, payer);
+                        if let Some(recorded) = recorded
+                            && self.nonce_account_override.is_none()
+                        {
+                            crate::output::info(format!(
+                                "Using the durable nonce account {} recorded for {payer_base58} \
+                                 by setup-nonce. To make this command reproducible elsewhere, \
+                                 add: --nonce-account {}",
+                                recorded.to_base58(),
+                                recorded.to_base58()
+                            ));
+                        }
+                        let nonce_account = self
+                            .nonce_account_override
+                            .or(recorded)
+                            .unwrap_or(nonce_account);
                         let nonce_info =
                                 rpc.nonce_account(&nonce_account.to_base58())?
                                     .wrap_err_with(|| {
@@ -518,7 +577,20 @@ pub fn assemble_and_broadcast(
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(&wire_bytes)
     };
-    rpc::Client::new(&chain.rpc_url)?.send_transaction(&tx_base64)
+    let tx_signature = rpc::Client::new(&chain.rpc_url)?.send_transaction(&tx_base64)?;
+    // A nonce set up for another derived address (a DAO's) is remembered so
+    // the DAO route on this machine finds it without --nonce-account. The
+    // recovery path (`transaction broadcast`) lands here too.
+    if let Some((nonce_account, authority)) = initialized_nonce_account(&tx)
+        && nonce_account != nonce_account_address(authority)
+    {
+        crate::config::record_nonce_account(
+            &chain.chain_key,
+            &authority.to_base58(),
+            &nonce_account.to_base58(),
+        );
+    }
+    Ok(tx_signature)
 }
 
 /// Envelope prettification: instruction data blobs are emitted as number
@@ -585,6 +657,36 @@ fn format_native(lamports: u64, chain: &ResolvedChain) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_the_nonce_account_a_setup_transaction_initializes() {
+        let payer = SolanaAddress([1u8; 32]);
+        let dao = SolanaAddress([2u8; 32]);
+        let (nonce_account, seed) = nonce_account_for(payer, dao);
+        let tx = SolanaTransactionBuilder::new()
+            .payer(payer)
+            .instructions(vec![
+                create_account_with_seed(
+                    payer,
+                    nonce_account,
+                    &seed,
+                    1,
+                    NONCE_ACCOUNT_SIZE,
+                    SYSTEM_PROGRAM,
+                ),
+                initialize_nonce_account(nonce_account, dao),
+            ])
+            .recent_blockhash(Blockhash([9u8; 32]))
+            .build();
+        assert_eq!(initialized_nonce_account(&tx), Some((nonce_account, dao)));
+
+        let transfer = SolanaTransactionBuilder::new()
+            .payer(payer)
+            .instructions(vec![utils::system_transfer(payer, dao, 1)])
+            .recent_blockhash(Blockhash([9u8; 32]))
+            .build();
+        assert_eq!(initialized_nonce_account(&transfer), None);
+    }
 
     #[test]
     fn nonce_account_for_another_authority_is_deterministic_and_seed_fits() {

@@ -100,8 +100,6 @@ pub fn select_or_manual(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
 
     #[test]
@@ -118,7 +116,7 @@ mod tests {
     fn lookup_networks_puts_mainnet_first() {
         let mut chain = ChainDef {
             family: "evm".into(),
-            networks: BTreeMap::default(),
+            networks: std::collections::BTreeMap::default(),
         };
         for name in ["testnet", "mainnet", "devnet"] {
             chain.networks.insert(

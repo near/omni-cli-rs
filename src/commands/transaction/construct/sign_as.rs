@@ -156,6 +156,7 @@ fn envelope_blob(
     path: &str,
     intent: &str,
     unsigned_tx: &serde_json::Value,
+    after_broadcast: Option<&str>,
 ) -> color_eyre::eyre::Result<String> {
     let envelope = crate::envelope::Envelope {
         omni: crate::envelope::VERSION,
@@ -167,6 +168,7 @@ fn envelope_blob(
         meta: crate::envelope::EnvelopeMeta {
             nonce: None,
             builder_version: env!("CARGO_PKG_VERSION").to_string(),
+            after_broadcast: after_broadcast.map(str::to_string),
         },
     };
     Ok(base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&envelope)?))
@@ -246,7 +248,13 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
                     network_config,
                 )?;
 
-                let blob = envelope_blob(&spec_context, &path, "", &built.unsigned_tx)?;
+                let blob = envelope_blob(
+                    &spec_context,
+                    &path,
+                    "",
+                    &built.unsigned_tx,
+                    built.after_broadcast.as_deref(),
+                )?;
                 crate::output::info(format!(
                     "If the final broadcast fails, recover with:\n  \
                      omni transaction broadcast <NEAR-TX-HASH> {owner} --unsigned-tx {blob} \
@@ -286,8 +294,14 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
                     .chain_def
                     .resolve(&spec_context.chain_key, &network_config.network_name)?;
                 let recovery_hint = || {
-                    let blob = envelope_blob(&spec_context, &path, "", &unsigned_tx)
-                        .expect("the envelope was already encodable before sending");
+                    let blob = envelope_blob(
+                        &spec_context,
+                        &path,
+                        "",
+                        &unsigned_tx,
+                        after_broadcast.as_deref(),
+                    )
+                    .expect("the envelope was already encodable before sending");
                     format!(
                         "omni transaction broadcast {} {} --unsigned-tx {blob} network-config {}",
                         outcome_view.transaction.hash,
@@ -448,6 +462,7 @@ impl From<SignAsDaoContext> for near_cli_rs::commands::ActionContext {
                     meta: crate::envelope::EnvelopeMeta {
                         nonce: None,
                         builder_version: env!("CARGO_PKG_VERSION").to_string(),
+                        after_broadcast: None,
                     },
                 };
                 let description = crate::envelope::encode_description(&envelope)?;
