@@ -26,6 +26,8 @@ base64 = "0.23"
 hex = "0.4"
 
 shell-words = "1.0.0"
+# Progress notes render in near-cli-rs's prompt gutter via its tracing layer.
+tracing = "0.1"
 # Same version near-cli-rs uses, so the tree carries one copy.
 prettytable = "0.10"
 color-eyre = "0.6"
@@ -76,6 +78,11 @@ k256 = { version = "0.14", features = ["ecdsa"] }
 # and keccak256 / checksummed address formatting. Encoding only - no RPC stack.
 alloy-primitives = "1"
 alloy-dyn-abi = "1"
+# Contract ABIs (fetched from Sourcify/Etherscan in interactive mode) drive
+# function selection and per-argument prompts.
+alloy-json-abi = "1"
+# Anchor IDLs stored on-chain are zlib-compressed.
+flate2 = "1"
 
 # `omni self-update`: swaps the running binary for the latest GitHub release.
 # TLS comes from the reqwest rustls features above (feature unification).

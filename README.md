@@ -142,11 +142,34 @@ omni transaction broadcast <NEAR-TX-HASH> voter.near network-config mainnet
 | Family  | Default chains                          | Actions                                   | Notes |
 |---------|-----------------------------------------|-------------------------------------------|-------|
 | `evm`   | eth, base, arb, bnb, pol, hyperevm, abs | `transfer`, `contract-call`, `raw`        | EIP-1559; `contract-call` takes a cast-style function signature + JSON args |
-| `svm`   | solana, fogo                            | `transfer`, `instruction`, `setup-nonce`  | `instruction` = one raw program instruction (`payer` names the derived address). The DAO route needs a durable nonce account: run `setup-nonce` once (account-owned paths) or pass `--nonce-account` (DAO-owned paths) |
+| `svm`   | solana, fogo                            | `transfer`, `instruction`, `setup-nonce`  | `instruction` = one raw program instruction (`payer` names the derived address). The DAO route needs a durable nonce account: run `setup-nonce` once from the derived address itself (account-owned paths), or from your own account with `--nonce-authority <DAO's derived address>` and then pass the printed `--nonce-account` (DAO-owned paths) |
 | `utxo`  | btc                                     | `transfer`                                | P2WPKH; one MPC signature per input; change returns to the sender |
 | `aptos` | aptos                                   | `transfer`, `contract-call`               | Every transaction is simulated before signing (gas sized from it, aborts surfaced early); DAO proposals expire 14 days after construction |
 | `sui`   | sui                                     | `transfer`, `move-call`                   | `move-call` resolves `object:0x...` args on-chain (owned or shared); gas-coin references go stale if the derived address is touched while a DAO votes |
 | `ton`   | ton                                     | `transfer`, `send-message`                | `send-message` attaches a body (`comment:<text>` or `boc:<hex>`), bounceable by default; v5r1 wallet deploys itself on first use |
+
+### Calling contracts
+
+Interactively, `omni` looks the contract's published interface up and guides
+the call the way a multisig UI would, so nobody has to hand-encode calldata
+or derive program accounts:
+
+| Family  | Interface source                                                    | What you get |
+|---------|---------------------------------------------------------------------|--------------|
+| `evm`   | Verified ABI from [Sourcify](https://sourcify.dev) (no key), or Etherscan-family explorers with an API key; proxies are followed to their implementation | a list of state-changing functions, then one prompt per argument with its Solidity type |
+| `svm`   | The program's Anchor IDL published on-chain, or an IDL file / URL you point at | a list of instructions; arguments prompted by type; PDAs, fixed addresses, and the payer resolved for you, only the remaining accounts asked |
+| `aptos` | The module's exposed functions from the fullnode                    | browse address -> module -> entry function; type arguments and arguments prompted with their Move types |
+| `sui`   | The normalized module from the fullnode                             | same as Aptos; object arguments detected from the signature |
+
+The lookup only helps *you*: the echoed non-interactive command is the plain
+textual form below (a function signature and JSON args, `type:value` Move
+args, a Solana accounts list and hex data), so it is reproducible without any
+lookup and `proposal review` verifies exactly those bytes. Every prompt keeps
+a "type it manually" escape hatch, and TON keeps its `comment:`/`boc:` body
+input (there is no on-chain ABI standard to read).
+
+EVM signatures may carry parameter names, cast-style: `transfer(address to,
+uint256 amount)`.
 
 Move calls (Aptos `contract-call`, Sui `move-call`) take the function as
 `<address>::<module>::<function>`, type arguments as a JSON array of Move
@@ -209,6 +232,9 @@ explorer_tx_url = "https://sepolia.basescan.org/tx/"
   write backs up the previous file to `omni-config.toml.bak`.
 - The same file holds `default_derivation_path` (pre-filled in prompts,
   `omni-1` out of the box) and the `[mpc]` signer settings.
+- `[evm] etherscan_api_key = "..."` (or the `ETHERSCAN_API_KEY` environment
+  variable) lets the EVM contract-call prompt fetch ABIs from Etherscan-family
+  explorers in addition to Sourcify. One key serves every Etherscan chain.
 
 ## Development
 

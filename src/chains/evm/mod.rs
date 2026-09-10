@@ -2,6 +2,7 @@
 //! on top of omni-transaction-rs EIP-1559 builders.
 
 pub mod abi;
+pub mod abi_source;
 pub mod rpc;
 
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
@@ -84,6 +85,7 @@ impl ChainAdapter for EvmAdapter {
             unsigned_tx: serde_json::to_value(EvmTxJson::from(&tx))?,
             payloads: vec![payload.to_vec()],
             display,
+            after_broadcast: None,
         })
     }
 }

@@ -206,6 +206,19 @@ pub struct OmniConfig {
     pub mpc: MpcConfig,
     #[serde(default)]
     pub chains: BTreeMap<String, ChainDef>,
+    #[serde(default)]
+    pub evm: EvmSettings,
+}
+
+/// EVM-wide settings (not per chain).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct EvmSettings {
+    /// Etherscan v2 API key (one key serves every Etherscan-family
+    /// explorer). Optional: interactive `contract-call` looks up verified
+    /// ABIs on Sourcify without a key and falls back to Etherscan with one.
+    /// The `ETHERSCAN_API_KEY` environment variable overrides it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub etherscan_api_key: Option<String>,
 }
 
 fn default_derivation_path() -> String {
@@ -425,10 +438,10 @@ pub fn load_or_init() -> color_eyre::eyre::Result<OmniConfig> {
     if !path.exists() {
         std::fs::write(&path, DEFAULT_CONFIG_TOML)
             .wrap_err_with(|| format!("Failed to write default config: {}", path.display()))?;
-        eprintln!(
-            "Note: created a default omni chain registry at {}",
+        crate::output::info(format!(
+            "Created a default omni chain registry at {}",
             path.display()
-        );
+        ));
     }
 
     let content = std::fs::read_to_string(&path)

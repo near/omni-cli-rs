@@ -2,47 +2,72 @@
 //! like `transfer(address,uint256)` plus a JSON array of argument values,
 //! and the calldata is encoded without any external ABI registry.
 
-use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
+use alloy_json_abi::Function;
 use color_eyre::eyre::{WrapErr, eyre};
 
+/// Parses a human-readable function signature: `transfer(address,uint256)`,
+/// `transfer(address to, uint256 amount)`, or the same with a leading
+/// `function` keyword (the form ABIs are usually quoted in).
+pub fn parse_function(signature: &str) -> color_eyre::eyre::Result<Function> {
+    let signature = signature.trim();
+    let signature = signature
+        .strip_prefix("function ")
+        .map_or(signature, str::trim_start);
+    if signature.is_empty() {
+        return Err(eyre!(
+            "Function signature must look like `name(type1,type2)` or \
+             `name(type1 param1, type2 param2)`"
+        ));
+    }
+    Function::parse(signature).map_err(|err| {
+        eyre!(
+            "Invalid function signature `{signature}`: {err} (expected e.g. \
+             `transfer(address to, uint256 amount)` or `pause()`)"
+        )
+    })
+}
+
+/// `name(type name, type name)` - the signature with parameter names kept,
+/// the way the guided flow writes the chosen function back into the command.
+pub fn human_signature(function: &Function) -> String {
+    let params: Vec<String> = function
+        .inputs
+        .iter()
+        .map(|param| {
+            let ty = param.selector_type();
+            if param.name.is_empty() {
+                ty.into_owned()
+            } else {
+                format!("{ty} {}", param.name)
+            }
+        })
+        .collect();
+    format!("{}({})", function.name, params.join(", "))
+}
+
 /// Encodes calldata from a human-readable function signature and a JSON array
-/// of argument values. Returns `(calldata, canonical_signature)`.
+/// of argument values. Returns `(calldata, canonical_signature)`, the latter
+/// being the types-only form (`transfer(address,uint256)`) that determines
+/// the selector.
 pub fn encode_calldata(
     signature: &str,
     args_json: &str,
 ) -> color_eyre::eyre::Result<(Vec<u8>, String)> {
-    let signature = signature.trim();
-    let open = signature
-        .find('(')
-        .ok_or_else(|| eyre!("Function signature must look like `name(type1,type2)`"))?;
-    if !signature.ends_with(')') {
-        return Err(eyre!("Function signature must end with `)`"));
-    }
-    let name = signature[..open].trim();
-    if name.is_empty() {
-        return Err(eyre!("Function signature is missing the function name"));
-    }
-    let params = &signature[open..];
-
-    let tuple_type = DynSolType::parse(params)
-        .wrap_err_with(|| format!("Failed to parse parameter types in `{signature}`"))?;
-    let DynSolType::Tuple(component_types) = &tuple_type else {
-        return Err(eyre!("Failed to parse `{params}` as a parameter list"));
-    };
-
-    // Canonical signature (aliases like `uint` normalized to `uint256`)
-    // determines the 4-byte selector. Join the components ourselves: the
-    // tuple's own `sol_type_name()` renders a one-element tuple as
-    // `(address,)`, which would hash to a selector no contract has.
-    let canonical_signature = format!(
-        "{name}({})",
-        component_types
-            .iter()
-            .map(DynSolType::sol_type_name)
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    let selector = &alloy_primitives::keccak256(canonical_signature.as_bytes())[..4];
+    let function = parse_function(signature)?;
+    let canonical_signature = function.signature();
+    let component_types = function
+        .inputs
+        .iter()
+        .map(|param| {
+            param.resolve().map_err(|err| {
+                eyre!(
+                    "Failed to resolve parameter type `{}` in `{canonical_signature}`: {err}",
+                    param.selector_type()
+                )
+            })
+        })
+        .collect::<color_eyre::eyre::Result<Vec<DynSolType>>>()?;
 
     let args_json = args_json.trim();
     let args: Vec<serde_json::Value> = if args_json.is_empty() {
@@ -61,7 +86,7 @@ pub fn encode_calldata(
     }
 
     let mut values = Vec::with_capacity(args.len());
-    for (index, (arg, ty)) in args.iter().zip(component_types).enumerate() {
+    for (index, (arg, ty)) in args.iter().zip(&component_types).enumerate() {
         let arg_str = match arg {
             serde_json::Value::String(s) => s.clone(),
             other => other.to_string(),
@@ -73,7 +98,7 @@ pub fn encode_calldata(
     }
 
     let encoded_args = DynSolValue::Tuple(values).abi_encode_params();
-    let mut calldata = selector.to_vec();
+    let mut calldata = function.selector().to_vec();
     calldata.extend_from_slice(&encoded_args);
     Ok((calldata, canonical_signature))
 }
@@ -123,6 +148,51 @@ mod tests {
         let (a, _) = encode_calldata("f(uint)", "[\"1\"]").unwrap();
         let (b, _) = encode_calldata("f(uint256)", "[\"1\"]").unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn accepts_named_parameters_and_function_keyword() {
+        let (bare, canonical) = encode_calldata(
+            "transfer(address,uint256)",
+            r#"["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "1000"]"#,
+        )
+        .unwrap();
+        let (named, canonical_named) = encode_calldata(
+            "function transfer(address to, uint256 amount)",
+            r#"["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "1000"]"#,
+        )
+        .unwrap();
+        assert_eq!(bare, named);
+        assert_eq!(canonical, canonical_named);
+        assert_eq!(canonical_named, "transfer(address,uint256)");
+    }
+
+    #[test]
+    fn named_single_arg_selector() {
+        let (calldata, _) = encode_calldata(
+            "balanceOf(address account)",
+            r#"["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"]"#,
+        )
+        .unwrap();
+        assert_eq!(&calldata[..4], &[0x70, 0xa0, 0x82, 0x31]);
+    }
+
+    #[test]
+    fn human_signature_keeps_names_and_tuples() {
+        let function =
+            parse_function("swap((address,uint256) order, bytes sig, uint8[] flags)").unwrap();
+        assert_eq!(
+            human_signature(&function),
+            "swap((address,uint256) order, bytes sig, uint8[] flags)"
+        );
+        assert_eq!(
+            human_signature(&parse_function("pause()").unwrap()),
+            "pause()"
+        );
+        assert_eq!(
+            human_signature(&parse_function("f(address,uint256 b)").unwrap()),
+            "f(address, uint256 b)"
+        );
     }
 
     #[test]

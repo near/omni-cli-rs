@@ -58,11 +58,11 @@ pub fn encode_description(envelope: &Envelope) -> color_eyre::eyre::Result<Strin
     let description =
         serde_json::to_string(envelope).wrap_err("Failed to serialize the envelope")?;
     if description.len() > SIZE_WARNING_BYTES {
-        eprintln!(
-            "Warning: the proposal description is {} KB; it is stored in the DAO's state \
-             forever and paid from the DAO's balance.",
+        crate::output::warn(format!(
+            "the proposal description is {} KB; it is stored in the DAO's state forever \
+             and paid from the DAO's balance.",
             description.len() / 1024
-        );
+        ));
     }
     Ok(description)
 }

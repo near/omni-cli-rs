@@ -3,6 +3,7 @@
 //! (`sha3_256("APTOS::RawTransaction") || bcs(raw_txn)`) via its ed25519
 //! key domain.
 
+pub mod abi;
 pub mod rpc;
 
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
@@ -338,6 +339,7 @@ impl ChainAdapter for AptosAdapter {
             unsigned_tx,
             payloads: vec![signing_payload],
             display,
+            after_broadcast: None,
         })
     }
 }

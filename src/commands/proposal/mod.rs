@@ -387,7 +387,7 @@ fn review(
     let omni_config = crate::config::load_or_init()?;
     let api_network = crate::mpc::to_near_api_network(network_config)?;
 
-    eprintln!("\nFetching proposal #{proposal_id} from {dao} ...");
+    crate::output::info(format!("Fetching proposal #{proposal_id} from {dao} ..."));
     let proposal = crate::dao::fetch_proposal(&api_network, dao, proposal_id)?;
     let status = proposal["status"].as_str().unwrap_or("?");
     let proposer = proposal["proposer"].as_str().unwrap_or("?");

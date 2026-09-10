@@ -8,6 +8,7 @@
 //! adapters only map [`MoveType`] onto their own `TypeTag` enums.
 
 use color_eyre::eyre::{WrapErr, eyre};
+use inquire::validator::Validation;
 
 /// A parsed Move type. Struct addresses stay as 32-byte arrays so each
 /// family can wrap them in its own address type.
@@ -249,9 +250,172 @@ pub fn parse_string_list(json: &str) -> color_eyre::eyre::Result<Vec<String>> {
     })
 }
 
+// ---------------------------------------------------------------- guided calls
+
+/// How one declared parameter of a Move function is collected in the guided
+/// (interactive) flow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArgKind {
+    /// Supplied by the runtime, not the caller (`&signer`, `&mut TxContext`).
+    Skip,
+    /// Collected as a value and written as `<prefix>:<value>`, one of the
+    /// kinds [`parse_arg`] accepts.
+    Typed(&'static str),
+    /// Not mapped to a `type:value` kind; the user types the full
+    /// `type:value` themselves.
+    Manual,
+}
+
+/// What value format a prompt for this kind expects.
+pub fn prompt_hint(kind: &ArgKind) -> &'static str {
+    match kind {
+        ArgKind::Skip => "supplied automatically",
+        ArgKind::Typed("bool") => "true or false",
+        ArgKind::Typed("u8" | "u16" | "u32" | "u64" | "u128" | "u256") => {
+            "a decimal integer (underscores allowed, e.g. 1_000_000)"
+        }
+        ArgKind::Typed("address") => "a 0x-prefixed address (object addresses too)",
+        ArgKind::Typed("string") => "plain text (UTF-8)",
+        ArgKind::Typed("hex") => "raw bytes as hex, e.g. 0xdeadbeef",
+        ArgKind::Typed("vector<address>") => "comma-separated 0x addresses",
+        ArgKind::Typed("object") => "the object id (0x...); ownership is resolved on-chain",
+        ArgKind::Typed(_) => "a value of the declared type",
+        ArgKind::Manual => {
+            "no guided input for this type: type the full type:value (e.g. u64:1, hex:0x..)"
+        }
+    }
+}
+
+/// One declared parameter: its Move type as text and how to collect it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuidedParam {
+    pub type_text: String,
+    pub kind: ArgKind,
+}
+
+/// The function a guided flow picked from the module interface, parked
+/// between the function prompt and the type-argument / argument prompts.
+#[derive(Debug, Clone)]
+pub struct SelectedMoveFunction {
+    /// `<address>::<module>::<function>`
+    pub path: String,
+    pub generic_count: usize,
+    pub params: Vec<GuidedParam>,
+}
+
+/// `name<T0, T1>(u64, address)` - the runtime-supplied params are left out.
+pub fn render_signature(name: &str, generic_count: usize, params: &[GuidedParam]) -> String {
+    let generics = if generic_count == 0 {
+        String::new()
+    } else {
+        format!(
+            "<{}>",
+            (0..generic_count)
+                .map(|index| format!("T{index}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let shown: Vec<&str> = params
+        .iter()
+        .filter(|param| param.kind != ArgKind::Skip)
+        .map(|param| param.type_text.as_str())
+        .collect();
+    format!("{name}{generics}({})", shown.join(", "))
+}
+
+/// Prompts one Move type per type parameter; the JSON array the command
+/// line takes. Nothing is asked for a function without generics.
+pub fn prompt_type_args(
+    function: &SelectedMoveFunction,
+    example: &str,
+) -> color_eyre::eyre::Result<String> {
+    let mut type_args = Vec::with_capacity(function.generic_count);
+    for index in 0..function.generic_count {
+        let text = inquire::Text::new(&format!("Type argument T{index} (a Move type):"))
+            .with_help_message(&format!("e.g. {example}"))
+            .with_validator(|input: &str| {
+                Ok(match parse_type(input) {
+                    Ok(_) => Validation::Valid,
+                    Err(err) => Validation::Invalid(err.to_string().into()),
+                })
+            })
+            .prompt()?;
+        type_args.push(text.trim().to_string());
+    }
+    Ok(serde_json::to_string(&type_args)?)
+}
+
+/// Prompts one value per caller-supplied parameter, validating it against
+/// its declared kind, and returns the `type:value` JSON array the command
+/// line takes. Nothing is asked when no parameter is left.
+pub fn prompt_args(function: &SelectedMoveFunction) -> color_eyre::eyre::Result<String> {
+    let mut args = Vec::new();
+    for (position, param) in function
+        .params
+        .iter()
+        .filter(|param| param.kind != ArgKind::Skip)
+        .enumerate()
+    {
+        let label = format!("arg {} ({}):", position + 1, param.type_text);
+        let hint = prompt_hint(&param.kind);
+        let arg = match &param.kind {
+            ArgKind::Typed(prefix) => {
+                let prefix = *prefix;
+                let value = inquire::Text::new(&label)
+                    .with_help_message(hint)
+                    .with_validator(move |input: &str| {
+                        Ok(match parse_arg(&format!("{prefix}:{input}")) {
+                            Ok(_) => Validation::Valid,
+                            Err(err) => Validation::Invalid(err.to_string().into()),
+                        })
+                    })
+                    .prompt()?;
+                format!("{prefix}:{}", value.trim())
+            }
+            ArgKind::Manual | ArgKind::Skip => inquire::Text::new(&label)
+                .with_help_message(hint)
+                .with_validator(|input: &str| {
+                    Ok(match parse_arg(input) {
+                        Ok(_) => Validation::Valid,
+                        Err(err) => Validation::Invalid(err.to_string().into()),
+                    })
+                })
+                .prompt()?
+                .trim()
+                .to_string(),
+        };
+        args.push(arg);
+    }
+    Ok(serde_json::to_string(&args)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renders_guided_signatures_without_runtime_params() {
+        let params = vec![
+            GuidedParam {
+                type_text: "&signer".into(),
+                kind: ArgKind::Skip,
+            },
+            GuidedParam {
+                type_text: "u64".into(),
+                kind: ArgKind::Typed("u64"),
+            },
+            GuidedParam {
+                type_text: "0x1::option::Option<u64>".into(),
+                kind: ArgKind::Manual,
+            },
+        ];
+        assert_eq!(
+            render_signature("f", 2, &params),
+            "f<T0, T1>(u64, 0x1::option::Option<u64>)"
+        );
+        assert_eq!(render_signature("g", 0, &[]), "g()");
+    }
 
     #[test]
     fn parses_types_including_nested_generics() {

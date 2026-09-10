@@ -5,6 +5,7 @@ use color_eyre::eyre::{WrapErr, eyre};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
+use crate::chains::aptos::abi::{ModuleAbi, MoveModule};
 use crate::chains::http::{FlexU64, RestClient, u64_from_number_or_string};
 
 pub struct Client {
@@ -81,7 +82,17 @@ impl Client {
     }
 
     fn get<T: DeserializeOwned>(&self, path: &str) -> color_eyre::eyre::Result<T> {
+        self.get_optional(path)?
+            .ok_or_else(|| eyre!("Aptos REST API error (404 Not Found) from {path}"))
+    }
+
+    /// Like `get`, but a 404 is `Ok(None)` (accounts and modules that do
+    /// not exist).
+    fn get_optional<T: DeserializeOwned>(&self, path: &str) -> color_eyre::eyre::Result<Option<T>> {
         let (status, body) = self.rest.send(self.rest.get(&format!("/v1{path}")))?;
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if !status.is_success() {
             return Err(eyre!(
                 "Aptos REST API error ({status}) from {path}: {}",
@@ -89,7 +100,31 @@ impl Client {
             ));
         }
         serde_json::from_str(&body)
+            .map(Some)
             .wrap_err_with(|| format!("Unexpected Aptos REST API response from {path}: {body}"))
+    }
+
+    /// The interface of one published module; `None` if the account or
+    /// module does not exist.
+    pub fn module_abi(
+        &self,
+        address_hex: &str,
+        module: &str,
+    ) -> color_eyre::eyre::Result<Option<ModuleAbi>> {
+        Ok(self
+            .get_optional::<MoveModule>(&format!("/accounts/{address_hex}/module/{module}"))?
+            .and_then(|module| module.abi))
+    }
+
+    /// The interfaces of every module an account publishes (first 100).
+    pub fn modules(&self, address_hex: &str) -> color_eyre::eyre::Result<Vec<ModuleAbi>> {
+        let modules: Vec<MoveModule> = self
+            .get_optional(&format!("/accounts/{address_hex}/modules?limit=100"))?
+            .unwrap_or_default();
+        Ok(modules
+            .into_iter()
+            .filter_map(|module| module.abi)
+            .collect())
     }
 
     pub fn ledger_info(&self) -> color_eyre::eyre::Result<LedgerInfo> {

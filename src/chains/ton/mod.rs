@@ -238,6 +238,7 @@ impl ChainAdapter for TonAdapter {
             unsigned_tx: serde_json::to_value(&tx)?,
             payloads: vec![payload],
             display,
+            after_broadcast: None,
         })
     }
 }

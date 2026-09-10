@@ -8,6 +8,7 @@ use crate::config::{ChainDef, MpcConfig};
 
 pub mod aptos;
 pub mod evm;
+pub mod guided;
 pub mod sign_as;
 pub mod sui;
 pub mod svm;

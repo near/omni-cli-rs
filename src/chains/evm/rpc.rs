@@ -26,6 +26,20 @@ impl<'de> Deserialize<'de> for Quantity {
     }
 }
 
+/// An EVM JSON-RPC byte string: `0x`-prefixed hex of arbitrary length.
+#[derive(Debug, Clone)]
+struct Bytes(Vec<u8>);
+
+impl<'de> Deserialize<'de> for Bytes {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        let hex_str = value.strip_prefix("0x").unwrap_or(&value);
+        hex::decode(hex_str)
+            .map(Bytes)
+            .map_err(|_| serde::de::Error::custom(format!("invalid hex bytes: '{value}'")))
+    }
+}
+
 fn quantity(value: u128) -> String {
     format!("0x{value:x}")
 }
@@ -83,6 +97,34 @@ impl Client {
             .rpc
             .call("eth_getBalance", (address(account), "latest"))?;
         Ok(balance)
+    }
+
+    /// Deployed bytecode at `account` (empty for an EOA / nothing deployed).
+    pub fn get_code(&self, account: Address) -> color_eyre::eyre::Result<Vec<u8>> {
+        let Bytes(code) = self.rpc.call("eth_getCode", (address(account), "latest"))?;
+        Ok(code)
+    }
+
+    /// One storage word of `account`.
+    pub fn get_storage_at(
+        &self,
+        account: Address,
+        slot: [u8; 32],
+    ) -> color_eyre::eyre::Result<[u8; 32]> {
+        let Bytes(word) = self.rpc.call(
+            "eth_getStorageAt",
+            (address(account), bytes(&slot), "latest"),
+        )?;
+        // Nodes return exactly 32 bytes, but left-pad defensively.
+        if word.len() > 32 {
+            return Err(color_eyre::eyre::eyre!(
+                "eth_getStorageAt returned {} bytes, expected 32",
+                word.len()
+            ));
+        }
+        let mut out = [0u8; 32];
+        out[32 - word.len()..].copy_from_slice(&word);
+        Ok(out)
     }
 
     pub fn gas_price(&self) -> color_eyre::eyre::Result<u128> {

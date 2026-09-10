@@ -86,6 +86,17 @@ impl ShowContext {
                 format!(", signer contracts: {:?}", config.mpc.contracts)
             },
         );
+        eprintln!(
+            "evm: etherscan api key {}",
+            match (
+                std::env::var("ETHERSCAN_API_KEY").ok(),
+                &config.evm.etherscan_api_key
+            ) {
+                (Some(_), _) => "set (ETHERSCAN_API_KEY environment variable)",
+                (None, Some(_)) => "set (omni-config.toml)",
+                (None, None) => "not set (ABI lookups use Sourcify only)",
+            }
+        );
         eprintln!("\n{} chain(s):", config.chains.len());
         let mut table = crate::commands::new_table();
         table.set_titles(crate::commands::title_row(&[
@@ -172,7 +183,9 @@ impl AddChainContext {
                     existing.family
                 ));
             }
-            eprintln!("\nChain '{chain_key}' already exists - reconfiguring its networks.");
+            crate::output::info(format!(
+                "Chain '{chain_key}' already exists - reconfiguring its networks."
+            ));
         }
 
         // The endpoint details are interactive by design: a chain entry is a

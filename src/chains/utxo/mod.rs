@@ -348,6 +348,7 @@ impl ChainAdapter for UtxoAdapter {
             })?,
             payloads,
             display,
+            after_broadcast: None,
         })
     }
 }

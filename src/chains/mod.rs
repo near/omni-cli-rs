@@ -65,6 +65,9 @@ pub struct BuiltTransaction {
     pub payloads: Vec<Vec<u8>>,
     /// Human-readable render shown before signing and in reviews.
     pub display: String,
+    /// Follow-up shown once the transaction is broadcast (e.g. the flag a
+    /// later command needs). `None` for most actions.
+    pub after_broadcast: Option<String>,
 }
 
 /// One chain family. The construct flow builds an adapter from the action the

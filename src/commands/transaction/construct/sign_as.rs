@@ -128,24 +128,24 @@ fn build_unsigned_tx(
     let api_network = crate::mpc::to_near_api_network(network_config)?;
     let domain_id = crate::mpc::domain_id(&context.mpc_config, context.adapter.scheme());
 
-    eprintln!(
-        "\nResolving the derived {} address for {owner} / \"{path}\" via {mpc_contract} \
+    crate::output::info(format!(
+        "Resolving the derived {} address for {owner} / \"{path}\" via {mpc_contract} \
          (key domain {domain_id}) ...",
         chain.family
-    );
+    ));
     let derived_public_key =
         crate::mpc::derived_public_key(&api_network, &mpc_contract, owner, path, domain_id)?;
-    eprintln!(
+    crate::output::info(format!(
         "Derived {} address: {}",
         chain.chain_key,
         context.adapter.derived_address(&derived_public_key)?
-    );
+    ));
 
     let built =
         context
             .adapter
             .build(&chain, &derived_public_key, owner.as_str(), path, latency)?;
-    eprintln!("{}", built.display);
+    crate::output::info(&built.display);
     Ok((built, chain))
 }
 
@@ -173,6 +173,10 @@ fn envelope_blob(
 }
 
 // ------------------------------------------------------------ sign-as-account
+
+/// The unsigned transaction (plus its post-broadcast note) built in the
+/// prepopulated-transaction callback and consumed after sending.
+type BuiltTxHolder = Arc<Mutex<Option<(serde_json::Value, Option<String>)>>>;
 
 #[derive(Debug, Clone, interactive_clap::InteractiveClap)]
 #[interactive_clap(input_context = DerivationPathContext)]
@@ -226,7 +230,7 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
         // Built in the prepopulated-transaction callback (once the network is
         // known), consumed in the after-sending callback to assemble and
         // broadcast the signed transaction.
-        let unsigned_tx_holder: Arc<Mutex<Option<serde_json::Value>>> = Arc::new(Mutex::new(None));
+        let unsigned_tx_holder: BuiltTxHolder = Arc::new(Mutex::new(None));
 
         let get_prepopulated_transaction_after_getting_network_callback: near_cli_rs::commands::GetPrepopulatedTransactionAfterGettingNetworkCallback = {
             let spec_context = item.spec_context.clone();
@@ -243,13 +247,14 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
                 )?;
 
                 let blob = envelope_blob(&spec_context, &path, "", &built.unsigned_tx)?;
-                eprintln!(
+                crate::output::info(format!(
                     "If the final broadcast fails, recover with:\n  \
                      omni transaction broadcast <NEAR-TX-HASH> {owner} --unsigned-tx {blob} \
-                     network-config {network_name}\n",
+                     network-config {network_name}",
                     network_name = network_config.network_name,
-                );
-                *unsigned_tx_holder.lock().unwrap() = Some(built.unsigned_tx.clone());
+                ));
+                *unsigned_tx_holder.lock().unwrap() =
+                    Some((built.unsigned_tx.clone(), built.after_broadcast.clone()));
 
                 let mpc_contract =
                     crate::mpc::mpc_contract_id(&spec_context.mpc_config, network_config)?;
@@ -272,7 +277,7 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
             let path = item.path.clone();
             let unsigned_tx_holder = unsigned_tx_holder.clone();
             Arc::new(move |outcome_view, network_config| {
-                let unsigned_tx = unsigned_tx_holder
+                let (unsigned_tx, after_broadcast) = unsigned_tx_holder
                     .lock()
                     .unwrap()
                     .clone()
@@ -310,6 +315,9 @@ impl From<SignAsAccountContext> for near_cli_rs::commands::ActionContext {
                         eprintln!("\n{} {tx_hash}", "Broadcast successful:".green());
                         if let Some(link) = chain.explorer_link(&tx_hash) {
                             eprintln!("Explorer: {}", link.cyan());
+                        }
+                        if let Some(note) = after_broadcast {
+                            eprintln!("\n{note}");
                         }
                         Ok(())
                     }
@@ -449,10 +457,10 @@ impl From<SignAsDaoContext> for near_cli_rs::commands::ActionContext {
                 let api_network = crate::mpc::to_near_api_network(network_config)?;
                 let proposal_bond =
                     crate::dao::fetch_proposal_bond(&api_network, &dao_account_id)?;
-                eprintln!(
-                    "Proposal bond: {proposal_bond} yoctoNEAR (returned unless the \
-                     proposal is rejected)\n"
-                );
+                crate::output::info(format!(
+                    "Proposal bond: {proposal_bond} yoctoNEAR (returned unless the proposal \
+                     is rejected)"
+                ));
 
                 let sign_args_list: Vec<crate::mpc::SignArgs> = built
                     .payloads

@@ -8,6 +8,7 @@
 //! and consumed by prepending `AdvanceNonceAccount` to governance
 //! transactions.
 
+pub mod idl;
 pub mod rpc;
 
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
@@ -35,7 +36,7 @@ const NONCE_SEED: &str = "omni-nonce";
 /// Byte size of an initialized nonce account's state.
 const NONCE_ACCOUNT_SIZE: u64 = 80;
 
-const SYSTEM_PROGRAM: SolanaAddress = SolanaAddress([0u8; 32]);
+pub(crate) const SYSTEM_PROGRAM: SolanaAddress = SolanaAddress([0u8; 32]);
 
 fn recent_blockhashes_sysvar() -> SolanaAddress {
     SolanaAddress::from_base58("SysvarRecentB1ockHashes11111111111111111111")
@@ -51,9 +52,12 @@ fn rent_sysvar() -> SolanaAddress {
 pub enum SvmActionSpec {
     /// Native SOL transfer via the system program.
     Transfer { to: SolanaAddress, lamports: u64 },
-    /// Create + initialize the derived address's durable nonce account -
-    /// the one-time prerequisite for the DAO route on SVM chains.
-    SetupNonce,
+    /// Create + initialize a durable nonce account - the one-time
+    /// prerequisite for the DAO route on SVM chains. `authority` is the
+    /// address that will use it: `None` for the derived address itself, or
+    /// another derived address (a DAO's) that cannot create its own because
+    /// creation needs a signature within a recent-blockhash window.
+    SetupNonce { authority: Option<SolanaAddress> },
     /// One arbitrary program instruction (program call) signed by the
     /// derived address as fee payer.
     Instruction {
@@ -91,11 +95,52 @@ pub struct SvmAdapter {
 /// `sha256(base || "omni-nonce" || system_program)`, the
 /// `create_with_seed` address rule.
 pub fn nonce_account_address(base: SolanaAddress) -> SolanaAddress {
+    create_with_seed(base, NONCE_SEED)
+}
+
+/// The `create_with_seed` address rule: `sha256(base || seed || owner)`
+/// with the system program as owner.
+fn create_with_seed(base: SolanaAddress, seed: &str) -> SolanaAddress {
     let mut hasher = Sha256::new();
     hasher.update(base.0);
-    hasher.update(NONCE_SEED.as_bytes());
+    hasher.update(seed.as_bytes());
     hasher.update(SYSTEM_PROGRAM.0);
     SolanaAddress(hasher.finalize().into())
+}
+
+/// The nonce account `payer` creates for `authority`: the payer's own
+/// deterministic one when they coincide, otherwise a seed account of the
+/// payer keyed by the authority (seeds are capped at 32 bytes, so the
+/// authority's base58 prefix is used). Deterministic, so re-running
+/// `setup-nonce` finds the existing account instead of making another.
+pub fn nonce_account_for(
+    payer: SolanaAddress,
+    authority: SolanaAddress,
+) -> (SolanaAddress, String) {
+    if authority == payer {
+        return (nonce_account_address(payer), NONCE_SEED.to_string());
+    }
+    let authority_base58 = authority.to_base58();
+    let seed = format!("nonce:{}", &authority_base58[..26]);
+    (create_with_seed(payer, &seed), seed)
+}
+
+/// How DAO-route commands reference a nonce account: the deterministic one
+/// of the derived address is found automatically; one created by someone
+/// else must be passed explicitly.
+fn nonce_account_flag_hint(
+    authority: SolanaAddress,
+    payer: SolanaAddress,
+    nonce_base58: &str,
+) -> String {
+    if authority == payer {
+        String::new()
+    } else {
+        format!(
+            "\nDAO-route commands for that derived address must pass it explicitly: \
+             --nonce-account {nonce_base58}"
+        )
+    }
 }
 
 /// `SystemInstruction::AdvanceNonceAccount` (bincode enum index 4).
@@ -216,42 +261,57 @@ impl ChainAdapter for SvmAdapter {
         let nonce_account = nonce_account_address(payer);
         let rpc = rpc::Client::new(&chain.rpc_url)?;
 
+        let mut after_broadcast = None;
         // Resolve blockhash + instruction prefix per action and latency.
         let (instructions, blockhash_base58, validity_note, summary, required) = match &self.spec {
-            SvmActionSpec::SetupNonce => {
+            SvmActionSpec::SetupNonce { authority } => {
                 if latency == ExecutionLatency::Governance {
                     return Err(eyre!(
                         "setup-nonce must run via sign-as-account (it is itself the \
-                             prerequisite for the DAO route)."
+                             prerequisite for the DAO route). To set up a nonce for a DAO's \
+                             derived address, run it from your own account with \
+                             --nonce-authority <the DAO's derived address>."
                     ));
                 }
-                if rpc.nonce_account(&nonce_account.to_base58())?.is_some() {
+                let authority = authority.unwrap_or(payer);
+                let authority_base58 = authority.to_base58();
+                let (nonce_account, seed) = nonce_account_for(payer, authority);
+                let nonce_base58 = nonce_account.to_base58();
+                if rpc.nonce_account(&nonce_base58)?.is_some() {
                     return Err(eyre!(
-                        "The durable nonce account {} for {payer_base58} already exists - \
-                             the DAO route is ready to use.",
-                        nonce_account.to_base58()
+                        "The durable nonce account {nonce_base58} for {authority_base58} already \
+                         exists - the DAO route is ready to use.{}",
+                        nonce_account_flag_hint(authority, payer, &nonce_base58)
                     ));
                 }
                 let rent = rpc.minimum_rent(NONCE_ACCOUNT_SIZE)?;
                 let recent = rpc.latest_blockhash()?.blockhash;
+                let for_whom = if authority == payer {
+                    String::new()
+                } else {
+                    format!(" with authority {authority_base58}")
+                };
+                after_broadcast = Some(format!(
+                    "Durable nonce account {nonce_base58} is ready for {authority_base58}.{}",
+                    nonce_account_flag_hint(authority, payer, &nonce_base58)
+                ));
                 (
                     vec![
                         create_account_with_seed(
                             payer,
                             nonce_account,
-                            NONCE_SEED,
+                            &seed,
                             rent,
                             NONCE_ACCOUNT_SIZE,
                             SYSTEM_PROGRAM,
                         ),
-                        initialize_nonce_account(nonce_account, payer),
+                        initialize_nonce_account(nonce_account, authority),
                     ],
                     recent,
                     "expires in ~60-90 seconds (recent blockhash)".to_string(),
                     format!(
-                        "set up the durable nonce account {} (one-time, enables the \
-                             DAO route; locks {} for rent exemption)",
-                        nonce_account.to_base58(),
+                        "set up the durable nonce account {nonce_base58}{for_whom} (one-time, \
+                         enables the DAO route; locks {} for rent exemption)",
                         format_native(rent, chain),
                     ),
                     rent + LAMPORTS_PER_SIGNATURE,
@@ -301,7 +361,7 @@ impl ChainAdapter for SvmAdapter {
                             LAMPORTS_PER_SIGNATURE,
                         )
                     }
-                    SvmActionSpec::SetupNonce => unreachable!("handled above"),
+                    SvmActionSpec::SetupNonce { .. } => unreachable!("handled above"),
                 };
                 match latency {
                     ExecutionLatency::Immediate => {
@@ -327,16 +387,22 @@ impl ChainAdapter for SvmAdapter {
                                              authority {payer_base58}, and none was found at {}.\n\
                                              - For an account-owned derived address, create the \
                                              deterministic one (signed by the derived key itself):\n  \
-                                             omni transaction construct svm {} setup-nonce \
-                                             derivation-path {derivation_path} sign-as-account {owner} ...\n\
-                                             - For a DAO-owned derived address, creation cannot go through \
-                                             the MPC (that is exactly what the nonce unblocks), so create \
-                                             one from any funded Solana wallet:\n  \
-                                             solana create-nonce-account <new-keypair.json> 0.0015 \
-                                             --nonce-authority {payer_base58}\n  \
-                                             ... then pass it via --nonce-account <address>.",
+                                             omni transaction construct svm {chain_key} setup-nonce \
+                                             derivation-path {derivation_path} sign-as-account {owner} \
+                                             network-config {near_network} sign-with-keychain send\n\
+                                             - For a DAO-owned derived address, the DAO cannot create it \
+                                             (creation needs a signature within a recent-blockhash \
+                                             window - exactly what the nonce unblocks). Create it from \
+                                             your own funded derived address instead:\n  \
+                                             omni transaction construct svm {chain_key} setup-nonce \
+                                             --nonce-authority {payer_base58} derivation-path <your-path> \
+                                             sign-as-account <you.near> network-config {near_network} \
+                                             sign-with-keychain send\n  \
+                                             ... then repeat this command with --nonce-account <the \
+                                             printed address>.",
                                             nonce_account.to_base58(),
-                                            chain.chain_key,
+                                            chain_key = chain.chain_key,
+                                            near_network = chain.near_network,
                                         )
                                     })?;
                         if nonce_info.authority != payer_base58 {
@@ -415,6 +481,7 @@ impl ChainAdapter for SvmAdapter {
             unsigned_tx,
             payloads: vec![payload],
             display,
+            after_broadcast,
         })
     }
 }
@@ -518,6 +585,21 @@ fn format_native(lamports: u64, chain: &ResolvedChain) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nonce_account_for_another_authority_is_deterministic_and_seed_fits() {
+        let payer = SolanaAddress([1u8; 32]);
+        let dao = SolanaAddress([2u8; 32]);
+        let (own, own_seed) = nonce_account_for(payer, payer);
+        assert_eq!(own, nonce_account_address(payer));
+        assert_eq!(own_seed, NONCE_SEED);
+        let (for_dao, seed) = nonce_account_for(payer, dao);
+        assert!(seed.len() <= 32, "create_with_seed caps seeds at 32 bytes");
+        assert_ne!(for_dao, own);
+        assert_eq!(nonce_account_for(payer, dao).0, for_dao);
+        // A different payer creating for the same DAO gets a different account.
+        assert_ne!(nonce_account_for(SolanaAddress([3u8; 32]), dao).0, for_dao);
+    }
 
     /// Round-trip through a real ed25519 key: build a transfer, sign the full
     /// message payload the way the MPC does, assemble, and verify both the

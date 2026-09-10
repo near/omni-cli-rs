@@ -151,7 +151,9 @@ pub fn fetch_derived_keys(
 ) -> color_eyre::eyre::Result<DerivedKeys> {
     let mpc_contract = mpc_contract_id(mpc_config, network_config)?;
     let api_network = to_near_api_network(network_config)?;
-    eprintln!("\nResolving the derived keys for {owner} / \"{path}\" via {mpc_contract} ...");
+    crate::output::info(format!(
+        "Resolving the derived keys for {owner} / \"{path}\" via {mpc_contract} ..."
+    ));
 
     let secp256k1 = secp256k1_bytes(&derived_public_key(
         &api_network,

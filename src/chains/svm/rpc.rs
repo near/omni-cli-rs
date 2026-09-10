@@ -54,6 +54,12 @@ struct ParsedNonce {
     info: NonceAccountInfo,
 }
 
+/// An account with `encoding: base64`: `data` is `["<base64>", "base64"]`.
+#[derive(Deserialize)]
+struct RawAccount {
+    data: (String, String),
+}
+
 /// The state of an initialized durable nonce account.
 #[derive(Debug, Clone, Deserialize)]
 pub struct NonceAccountInfo {
@@ -103,6 +109,30 @@ impl Client {
             format!("Account {address_base58} exists but is not a parsed durable nonce account")
         })?;
         Ok(Some(parsed.data.parsed.info))
+    }
+
+    /// Raw account data (base64 on the wire). `None` if the account does not
+    /// exist.
+    pub fn account_data(&self, address_base58: &str) -> color_eyre::eyre::Result<Option<Vec<u8>>> {
+        use base64::Engine;
+        let result: WithContext<Option<RawAccount>> = self.rpc.call(
+            "getAccountInfo",
+            (
+                address_base58,
+                RpcConfig {
+                    commitment: "confirmed",
+                    encoding: Some("base64"),
+                },
+            ),
+        )?;
+        result
+            .value
+            .map(|account| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(&account.data.0)
+                    .wrap_err_with(|| format!("Account {address_base58}: data is not base64"))
+            })
+            .transpose()
     }
 
     /// Lamports needed to make an account of `size` bytes rent-exempt.
@@ -160,6 +190,8 @@ mod tests {
 
         // A regular account (base64 data) is not a parsed nonce account.
         let regular = serde_json::json!({ "data": ["aGk=", "base64"] });
-        assert!(serde_json::from_value::<ParsedAccount>(regular).is_err());
+        assert!(serde_json::from_value::<ParsedAccount>(regular.clone()).is_err());
+        let raw: RawAccount = serde_json::from_value(regular).unwrap();
+        assert_eq!(raw.data.0, "aGk=");
     }
 }

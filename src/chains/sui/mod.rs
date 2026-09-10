@@ -2,6 +2,7 @@
 //! builders. The MPC signs the 32-byte Blake2b-256 intent digest verbatim via
 //! its ed25519 key domain (Sui validators verify ed25519 over the digest).
 
+pub mod abi;
 pub mod rpc;
 
 use color_eyre::eyre::{ContextCompat, WrapErr, eyre};
@@ -281,6 +282,7 @@ impl ChainAdapter for SuiAdapter {
             unsigned_tx,
             payloads: vec![signing_digest],
             display,
+            after_broadcast: None,
         })
     }
 }

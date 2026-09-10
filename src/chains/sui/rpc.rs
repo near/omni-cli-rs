@@ -1,9 +1,38 @@
 //! Blocking JSON-RPC client for Sui fullnodes, typed: requests and
 //! responses are serde structs.
 
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 
 use crate::chains::http::{FlexU64, JsonRpcClient, NO_PARAMS, u64_from_number_or_string};
+use crate::chains::sui::abi::NormalizedModule;
+
+/// Sui has no dedicated not-found response for packages/modules: the RPC
+/// error text says so. Everything else stays an error.
+fn not_found_as_none<T>(
+    result: color_eyre::eyre::Result<T>,
+) -> color_eyre::eyre::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(err) => {
+            let text = err.to_string().to_ascii_lowercase();
+            if [
+                "not found",
+                "does not exist",
+                "cannot find",
+                "no module found",
+            ]
+            .iter()
+            .any(|needle| text.contains(needle))
+            {
+                Ok(None)
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
 
 pub struct Client {
     rpc: JsonRpcClient,
@@ -110,6 +139,31 @@ impl Client {
             digest_base58: data.digest,
             shared_initial_version,
         })
+    }
+
+    /// The interface of one module; `None` when the package or module does
+    /// not exist (the node reports that as an RPC error).
+    pub fn normalized_module(
+        &self,
+        package_hex: &str,
+        module: &str,
+    ) -> color_eyre::eyre::Result<Option<NormalizedModule>> {
+        not_found_as_none(
+            self.rpc
+                .call("sui_getNormalizedMoveModule", (package_hex, module)),
+        )
+    }
+
+    /// The interfaces of every module in a package, keyed by module name.
+    pub fn normalized_modules(
+        &self,
+        package_hex: &str,
+    ) -> color_eyre::eyre::Result<BTreeMap<String, NormalizedModule>> {
+        Ok(not_found_as_none(
+            self.rpc
+                .call("sui_getNormalizedMoveModulesByPackage", (package_hex,)),
+        )?
+        .unwrap_or_default())
     }
 
     /// Broadcasts a signed transaction; returns the transaction digest.

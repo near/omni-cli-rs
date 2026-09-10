@@ -12,6 +12,7 @@ mod config;
 mod dao;
 mod envelope;
 mod mpc;
+mod output;
 mod types;
 
 /// omni is a toolbox for controlling accounts on other chains from NEAR
@@ -107,7 +108,9 @@ fn main() -> CliResult {
         (false, true) => Verbosity::TeachMe,
         (false, false) => Verbosity::Interactive,
     };
-    near_cli_rs::setup_tracing(verbosity)?;
+    // `omni=info` lets this crate's progress notes render in the same
+    // gutter as near-cli-rs's own.
+    near_cli_rs::setup_tracing_with_extra_directives(verbosity, &["omni=info"])?;
 
     let global_context = near_cli_rs::GlobalContext {
         config: near_config,

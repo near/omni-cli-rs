@@ -85,7 +85,7 @@ fn broadcast(
 ) -> near_cli_rs::CliResult {
     let api_network = crate::mpc::to_near_api_network(network_config)?;
 
-    eprintln!("\nFetching the NEAR transaction {tx_hash} ...");
+    crate::output::info(format!("Fetching the NEAR transaction {tx_hash} ..."));
     let result = crate::mpc::block_on(
         near_api::Transaction::status_with_options(
             tx_signer
@@ -121,7 +121,7 @@ fn broadcast(
         None => envelope_from_dao_proposal(&api_network, &result)?,
     };
 
-    eprintln!(
+    crate::output::info(format!(
         "Finalizing: [{}/{}] {} (derivation path \"{}\"){}",
         envelope.family,
         envelope.chain,
@@ -136,7 +136,7 @@ fn broadcast(
         } else {
             "\nMPC signature found in the receipts."
         },
-    );
+    ));
 
     if signatures.is_empty() {
         return Err(eyre!(
@@ -208,7 +208,9 @@ fn envelope_from_dao_proposal(
              calls, pass the envelope echoed by `construct` via --unsigned-tx.",
         )?;
 
-    eprintln!("Found act_proposal: proposal #{proposal_id} on {dao_account_id}");
+    crate::output::info(format!(
+        "Found act_proposal: proposal #{proposal_id} on {dao_account_id}"
+    ));
     let dao: near_primitives::types::AccountId = dao_account_id
         .as_str()
         .parse()

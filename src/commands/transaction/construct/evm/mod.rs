@@ -2,10 +2,12 @@
 
 use std::sync::Arc;
 
+use alloy_dyn_abi::Specifier;
 use inquire::CustomType;
 use strum::{EnumDiscriminants, EnumIter, EnumMessage};
 
-use crate::chains::evm::{EvmActionSpec, EvmAdapter};
+use crate::chains::evm::{EvmActionSpec, EvmAdapter, abi, abi_source};
+use crate::commands::transaction::construct::guided;
 use crate::commands::transaction::construct::{SelectedChain, SpecContext};
 use crate::types::eth_address::EthAddress;
 use crate::types::eth_amount::EthAmount;
@@ -204,9 +206,9 @@ impl ContractCall {
 /// How do you want to provide the calldata?
 pub enum Calldata {
     #[strum_discriminants(strum(
-        message = "function-signature  -   Type a signature like transfer(address,uint256) and the args (encoded locally)"
+        message = "function-signature  -   Pick a function from the contract's verified ABI (or type a signature) and fill in its arguments"
     ))]
-    /// Type a signature like transfer(address,uint256) and the args (encoded locally)
+    /// Pick a function from the contract's verified ABI (or type a signature) and fill in its arguments
     FunctionSignature(FunctionSignature),
     #[strum_discriminants(strum(
         message = "raw-calldata        -   Paste pre-encoded calldata hex (e.g. from cast/foundry)"
@@ -219,7 +221,8 @@ pub enum Calldata {
 #[interactive_clap(input_context = ContractCallContext)]
 #[interactive_clap(output_context = FunctionSignatureContext)]
 pub struct FunctionSignature {
-    /// Function signature (e.g. transfer(address,uint256) or pause()):
+    #[interactive_clap(skip_default_input_arg)]
+    /// Function signature, parameter names optional (e.g. transfer(address to, uint256 amount) or pause()):
     signature: String,
     #[interactive_clap(skip_default_input_arg)]
     /// Function arguments as a JSON array (e.g. ["0xabc...", "1000"]; [] for none):
@@ -252,14 +255,149 @@ impl From<FunctionSignatureContext> for SpecContext {
     }
 }
 
+/// The function picked from the ABI, parked between the signature prompt
+/// and the per-argument prompts of the same flow.
+#[derive(Clone)]
+struct SelectedFunction(alloy_json_abi::Function);
+
 impl FunctionSignature {
+    fn input_signature(context: &ContractCallContext) -> color_eyre::eyre::Result<Option<String>> {
+        let contract = context.contract.to_string();
+        guided::note(&format!(
+            "Looking up the interface of {contract} on {} ...",
+            context.chain_context.selected.chain_key
+        ));
+        let fetched =
+            match abi_source::fetch_abi(&context.chain_context.selected.chain_def, &contract) {
+                Ok(fetched) => fetched,
+                Err(err) => {
+                    guided::note(&format!("  Interface lookup failed: {err}"));
+                    None
+                }
+            };
+        if let Some(fetched) = fetched {
+            let implementation = fetched
+                .implementation
+                .as_ref()
+                .map(|address| format!(" (proxy; functions from implementation {address})"))
+                .unwrap_or_default();
+            guided::note(&format!(
+                "  Found on {} via {}{implementation}.",
+                fetched.network, fetched.source
+            ));
+            let functions = abi_source::callable_functions(&fetched.abi);
+            if functions.is_empty() {
+                guided::note("  The ABI has no state-changing functions.");
+            } else {
+                let options: Vec<String> = functions
+                    .iter()
+                    .map(|function| {
+                        let payable = matches!(
+                            function.state_mutability,
+                            alloy_json_abi::StateMutability::Payable
+                        );
+                        format!(
+                            "{}{}",
+                            abi::human_signature(function),
+                            if payable { " [payable]" } else { "" }
+                        )
+                    })
+                    .collect();
+                if let Some(index) = guided::select_or_manual("Which function?", options)? {
+                    let function = functions[index].clone();
+                    if !matches!(
+                        function.state_mutability,
+                        alloy_json_abi::StateMutability::Payable
+                    ) && context.attached_value.wei != 0
+                    {
+                        crate::output::warn(format!(
+                            "{} is not payable, but {} is attached - the call will revert.",
+                            function.name, context.attached_value
+                        ));
+                    }
+                    let signature = abi::human_signature(&function);
+                    guided::stash(SelectedFunction(function));
+                    return Ok(Some(signature));
+                }
+            }
+        } else {
+            guided::note(
+                "  No verified ABI found (Sourcify; Etherscan with an API key) - type the signature.",
+            );
+        }
+        Ok(Some(
+            inquire::Text::new(
+                "Function signature (parameter names optional, e.g. transfer(address to, uint256 amount) or pause()):",
+            )
+            .prompt()?,
+        ))
+    }
+
     fn input_args(_context: &ContractCallContext) -> color_eyre::eyre::Result<Option<String>> {
+        let function = guided::take_stashed::<SelectedFunction>().map(|selected| selected.0);
+        if let Some(function) = function {
+            return prompt_arguments(&function).map(Some);
+        }
         let args = inquire::Text::new(
             "Function arguments as a JSON array (e.g. [\"0xabc...\", \"1000\"]):",
         )
         .with_initial_value("[]")
         .prompt()?;
         Ok(Some(args))
+    }
+}
+
+/// One prompt per parameter, validated against its Solidity type; the
+/// answers become the JSON array the command line takes.
+fn prompt_arguments(function: &alloy_json_abi::Function) -> color_eyre::eyre::Result<String> {
+    if function.inputs.is_empty() {
+        return Ok("[]".to_string());
+    }
+    let mut values = Vec::with_capacity(function.inputs.len());
+    for (index, param) in function.inputs.iter().enumerate() {
+        let ty = param.resolve().map_err(|err| {
+            color_eyre::eyre::eyre!(
+                "Cannot resolve the type of parameter `{}`: {err}",
+                param.selector_type()
+            )
+        })?;
+        let label = if param.name.is_empty() {
+            format!("Argument #{index} ({}):", param.selector_type())
+        } else {
+            format!("{} ({}):", param.name, param.selector_type())
+        };
+        let validator_type = ty.clone();
+        let value = inquire::Text::new(&label)
+            .with_help_message(type_hint(&ty))
+            .with_validator(move |input: &str| {
+                Ok(match validator_type.coerce_str(input) {
+                    Ok(_) => inquire::validator::Validation::Valid,
+                    Err(err) => inquire::validator::Validation::Invalid(
+                        format!("not a valid {validator_type}: {err}").into(),
+                    ),
+                })
+            })
+            .prompt()?;
+        values.push(serde_json::Value::String(value));
+    }
+    Ok(serde_json::Value::Array(values).to_string())
+}
+
+/// What to type for a Solidity type.
+fn type_hint(ty: &alloy_dyn_abi::DynSolType) -> &'static str {
+    use alloy_dyn_abi::DynSolType;
+    match ty {
+        DynSolType::Address => "0x-prefixed 20-byte address",
+        DynSolType::Bool => "true or false",
+        DynSolType::Uint(_) => "decimal integer, e.g. 1000000 (wei-level units, no decimals)",
+        DynSolType::Int(_) => "decimal integer, negative allowed",
+        DynSolType::Bytes | DynSolType::FixedBytes(_) => "0x-prefixed hex bytes",
+        DynSolType::String => "plain text",
+        DynSolType::Array(_) | DynSolType::FixedArray(..) => {
+            "array like [1, 2, 3] or [0xabc..., 0xdef...]"
+        }
+        DynSolType::Tuple(_) => "tuple like (0xabc..., 1000, true)",
+        DynSolType::Function => "24-byte function selector (0x-hex)",
     }
 }
 
