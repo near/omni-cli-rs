@@ -16,22 +16,66 @@ command at the end so it can be scripted and shared with other DAO members.
 ## Install
 
 Prebuilt binaries for macOS, Linux, and Windows are attached to every
-[GitHub release](https://github.com/near/omni-cli-rs/releases).
+[GitHub release](https://github.com/near/omni-cli-rs/releases). Pick one:
 
-macOS / Linux:
+<details>
+  <summary>Install via shell script (macOS, Linux, Windows/WSL)</summary>
 
-```console
+```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/omni-cli-rs/releases/latest/download/omni-cli-rs-installer.sh | sh
 ```
+</details>
 
-Windows (PowerShell):
+<details>
+  <summary>Install via PowerShell script (Windows)</summary>
 
 ```powershell
-powershell -c "irm https://github.com/near/omni-cli-rs/releases/latest/download/omni-cli-rs-installer.ps1 | iex"
+irm https://github.com/near/omni-cli-rs/releases/latest/download/omni-cli-rs-installer.ps1 | iex
+```
+</details>
+
+<details>
+  <summary>Install via cargo-binstall (prebuilt, no compilation)</summary>
+
+Requires [cargo-binstall](https://github.com/cargo-bins/cargo-binstall). It
+downloads the release archive for your platform instead of compiling:
+
+```sh
+cargo binstall --git https://github.com/near/omni-cli-rs omni-cli-rs
+```
+</details>
+
+<details>
+  <summary>Get a portable binary (macOS, Linux, Windows)</summary>
+
+Download the archive for your platform from the
+[latest release](https://github.com/near/omni-cli-rs/releases/latest), unpack
+it, and put `omni` (or `omni.exe`) anywhere on your `PATH`.
+</details>
+
+<details>
+  <summary>Compile and install from source (Cargo on macOS, Linux, Windows)</summary>
+
+Needs a [Rust](https://rustup.rs) toolchain; no other system dependencies.
+
+```sh
+cargo install --git https://github.com/near/omni-cli-rs
+```
+</details>
+
+<details>
+  <summary>Upgrade an existing installation</summary>
+
+```sh
+omni self-update
 ```
 
-Upgrade later with `omni self-update`. `omni` uses your existing near-cli-rs
-network connections and keychain, so if `near` already works, `omni` does too.
+Replaces the running binary with the latest GitHub release, whichever way it
+was originally installed.
+</details>
+
+`omni` uses your existing near-cli-rs network connections and keychain, so if
+`near` already works, `omni` does too.
 
 ## Quick start
 
